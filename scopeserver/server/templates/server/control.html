@@ -4,8 +4,46 @@
 
 
 {% block body %}
-<button class="btn btn-default">blah</button>
+
+<table border="1" id="scopeinfo">
+	<tr><th class="serverlabel">GPS Location:</th><th class="displayvalue" id="gps_location_lat"></th><th class="displayvalue" id="gps_location_lon"></th</tr>
+	<tr><th class="serverlabel">Local Time</th><th class="displayvalue" id="local_time"></th>
+	<tr><th class="serverlabel">UTC Time</th><th class="displayvalue" id="utc_time"></th>
+	<tr><th class="serverlabel">Scope Position:</th><th class="displayvalue" id="scope_position_dec"></th><th class="displayvalue" id="scope_position_ra"></th></tr>
+</table>
+
+<script>
+function get_scope_status(){
+	jQuery.ajax({
+	    data: {
+	        csrfmiddlewaretoken: csrftoken,
+	        action: "serverStatus",
+	    },
+	    type: 'POST',
+	    success: function(result){
+	        if (result['status'] == "Success") {
+	        	console.log(result);
+	        	for (var key in result) {
+	        	    if ( key != "status") {
+	        	    	var value = result[key];
+	        	    	console.log(value);	
+	        	    	$(key).html(value);
+	        	    }
+	        	    
+	        	}
+	        } else {
+	            alert(result['msg']);
+	            window.location.reload();
+	        }
+	    },
+	    error: function(jqXHR, textStatus, String){
+	        alert(String);
+	    }, 
+	});	
+}
 
 
+
+</script>
 
 {% endblock %}

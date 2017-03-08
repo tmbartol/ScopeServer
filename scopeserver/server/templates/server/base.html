@@ -7,18 +7,19 @@
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <meta name="description" content="Scope Server">
       <meta name="author" content="Thomas Bartol">
-    <title>{% block title %}Menu Base Title{% endblock %}</title>
-    <script src="/static/js/jquery-3.1.1.min.js"></script>
-    
-    <link rel="stylesheet" href="/static/bower_components/bootstrap/dist/css/bootstrap.min.css" type="text/css">
-    <!-- <link rel="stylesheet" href="/static/bower_components/bootstrap/dist/css/bootstrap-theme.css" type="text/css"> -->
-    <script src="/static/bower_components/bootstrap/dist/js/bootstrap.js"></script>
+      <title>{% block title %}Menu Base Title{% endblock %}</title>
+      <script src="/static/js/jquery-3.1.1.min.js"></script>
+      <link rel="stylesheet" href="/static/css/server.css" type="text/css">
+      <link rel="stylesheet" href="/static/bower_components/bootstrap/dist/css/bootstrap.min.css" type="text/css">
+      <!-- <link rel="stylesheet" href="/static/bower_components/bootstrap/dist/css/bootstrap-theme.css" type="text/css"> -->
+      <script src="/static/bower_components/bootstrap/dist/js/bootstrap.js"></script>
+      
 
   </head>
 <body>
 {% block body %}
   <p>default block</p>
 {% endblock %}
-
+<script src="/static/js/ajax-csrf-snippet.js"></script>
 </body>
 </html>
