@@ -4,6 +4,7 @@ from pdb import set_trace as debug
 
 # Create your views here.
 
+import datetime
 import time
 
 def control(request):
@@ -13,12 +14,12 @@ def control(request):
 		action = request.POST.get("action", "")
 		try:
 			if action == "serverStatus":
-				result['#gps_location_lat'] = str(time.time())
-				result['#gps_location_lon'] = str(time.time())
-				result['#local_time'] = str(time.time())
-				result['#utc_time'] = str(time.time())
-				result['#scope_position_dec'] = str(time.time())
-				result['#scope_position_ra'] = str(time.time())
+				result['#gps_location_lat'] = str(int(time.time()))
+				result['#gps_location_lon'] = str(int(time.time()))
+				result['#local_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
+				result['#utc_time'] = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')
+				result['#scope_position_dec'] = str(int(time.time()))
+				result['#scope_position_ra'] = str(int(time.time()))
 				result['status'] = "Success"
 		except Exception as e:
 			result['status'] = "Failure"

@@ -27,7 +27,7 @@ SECRET_KEY = '89b4!6^z2$&5wql-bry9%*sec#!ryo=o@02)fh_!1s0_g%-n&c'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["lucia.dhcp.snl.salk.edu"]
 
 
 
