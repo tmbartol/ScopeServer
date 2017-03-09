@@ -1,9 +1,9 @@
 {% extends "server/base.html" %}
 
 
-
-
 {% block body %}
+
+{% csrf_token %}
 
 <table id="scopeinfo">
 	<tr><th class="serverlabel">GPS Location:</th><th class="displayvalue" id="gps_location_lat"></th><th class="displayvalue" id="gps_location_lon"></th</tr>
@@ -41,12 +41,9 @@ function get_scope_status(){
 	    }, 
 	});	
 }
-
-
-
 </script>
-<script>
 
+<script>
  interval_scope_status = setInterval(get_scope_status, 100);
 </script>
 

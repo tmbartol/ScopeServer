@@ -16,8 +16,8 @@ def control(request):
 			if action == "serverStatus":
 				result['#gps_location_lat'] = str(int(time.time()))
 				result['#gps_location_lon'] = str(int(time.time()))
-				result['#local_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-				result['#utc_time'] = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')
+				result['#local_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-5]
+				result['#utc_time'] = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')[:-5]
 				result['#scope_position_dec'] = str(int(time.time()))
 				result['#scope_position_ra'] = str(int(time.time()))
 				result['status'] = "Success"
