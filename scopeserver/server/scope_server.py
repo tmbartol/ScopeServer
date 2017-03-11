@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
 import socket
+import threading
+import socketserver
 import sys
 import tty
 import termios
-import threading
 import time
 import re
 import math
@@ -26,6 +27,38 @@ class _Getch:
     return ch
 
 
+class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
+
+    def handle(self):
+      try:
+        while scope.server_running:
+        # Receive data from client
+#          data = str(self.request.recv(16), 'ascii').strip()
+          data = self.request.recv(1024)
+#          sys.stderr.write('Server received:  "%s"\r\n' % (data.decode('ascii')))
+          if data:
+            # Process client command
+            cmd = data.decode('ascii').strip()
+            response = scope.process_cmd(cmd)
+            if response:
+              # Send response to client
+#              sys.stderr.write('Server responding:  %s\r\n' % (response.encode('ascii')))
+              self.request.sendall(response.encode('ascii'))
+          else:
+            return
+      except ConnectionResetError:
+        sys.stderr.write('Connection reset by peer.\r\n')
+        pass
+#      scope.server_thread.join()
+
+
+class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+    timeout = None
+    request_queue_size = 20
+
+
 class scope_server:
 
   def __init__(self):
@@ -34,6 +67,7 @@ class scope_server:
     self.ra_axis_running = False
     self.dec_axis_running = False
     self.ra_axis_guiding = False
+    self.goto_target_running = False
     self.resume_mode = 'NONE'  # allowed functions:  NONE, GUIDE, GOTO
     self.process_cmd = self.process_lx200_cmd
     self.res_ra = 40000.0
@@ -295,10 +329,27 @@ class scope_server:
   def server_start(self,server_address,port):
     self.input_start()
     self.server_running = True
+
+    self.threaded_server = ThreadedTCPServer((server_address, port), ThreadedTCPRequestHandler)
+
+    # Start a thread with the server -- that thread will then start one
+    # more thread for each request
+    self.server_thread = threading.Thread(target=self.threaded_server.serve_forever)
+    # Exit the server thread when the main thread terminates
+    self.server_thread.daemon = True
+    self.server_thread.start()
+    sys.stderr.write('Waiting for a connection...\r\n')
+    self.server_thread.join()
+
+
+    '''
     self.thread_server = threading.Thread(target=self.server, args=(server_address, port,))
     self.thread_server.setDaemon(1)
     self.thread_server.start()
     self.thread_server.join()
+    '''
+
+    
 
 
   # Stop server thread
@@ -306,8 +357,10 @@ class scope_server:
     if self.server_running:
       self.server_running=False
 #      self.socket.shutdown(socket.SHUT_RDWR)
-      self.socket.close()
-      self.thread_server.join()
+#      self.socket.close()
+      sys.stderr.write('Scope Server shutting down.\r\n')
+      self.threaded_server.shutdown()
+      self.server_thread.join()
 
 
   # The server
@@ -408,6 +461,7 @@ class scope_server:
 
     if (cmd != ':GD#') & (cmd != ':GR#'):
       sys.stderr.write('  Processing LX200 cmd: %s\r\n' % (cmd))
+#    sys.stderr.write('  Processing LX200 cmd: %s\r\n' % (cmd))
 
     if cmd == ':GD#':  # Get Dec angle:  sDD*MM'SS#
       response = '%s#' % self.get_dec_angle()
