@@ -1,0 +1,30 @@
+libnmc
+
+  Hacked up version of the JR Kerr NMC DLL sources for use as a shared 
+  library on Linux systems. It has only been tested with PIC-SERVO 
+  hardware, as I don't have a PIC-SERVO CMC, PIC-IO or PIC-STEP. It works 
+  for me, but YMMV.
+
+  -Brian Rudy (brudyNO@SPAMpraecogito.com)
+
+
+Compiling:
+  gcc -fPIC -g -c -Wall *.cpp
+  gcc -shared -Wl,-soname,libnmc.so.1 -o libnmc.so.1.0 *.o -lc
+  ln -s libnmc.so.1.0 libnmc.so.1
+  ln -s libnmc.so.1 libnmc.so
+
+
+Making the library available to other programs:
+
+System-wide (must be root):
+  su
+  cp libnmc.so.1.0 /usr/local/lib
+  /sbin/ldconfig
+  ( cd /usr/local/lib ; ln -s libnmc.so.1 libnmc.so )
+
+Local use only:
+  ln -s libnmc.so.1.0 libnmc.so.1
+  ln -s libnmc.so.1 libnmc.so
+  LD_LIBRARY_PATH=`pwd`:$LD_LIBRARY_PATH ; export LD_LIBRARY_PATH
+  /sbin/ldconfig -n .

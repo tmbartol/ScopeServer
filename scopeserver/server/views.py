@@ -11,7 +11,7 @@ import sys
 
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
-  HOST, PORT = "10.0.1.13", 4030
+  HOST, PORT = "10.0.1.15", 4030
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

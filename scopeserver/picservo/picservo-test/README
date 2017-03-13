@@ -1,0 +1,24 @@
+Test utility for the PIC-SERVO using libnmc.
+
+Compiling:
+	make picservo-test
+
+A successfull test should look something like this:
+
+  [brudy@styx picservo-test]$ ./picservo-test
+  Initializing...
+  Opening /dev/ttyS0
+  SioReadChars failed
+  read returned 0 errno = 0
+  SioReadChars failed
+  read returned 0 errno = 0
+  2 Modules found
+  Enumerating devices
+  Module 1: PIC-SERVO Controller
+  Module 2: PIC-SERVO Controller
+  Setting the gain...
+  Turning the servo on...
+  Moving...
+  Reading position...
+  Current Position: 1929
+  Shutting down...

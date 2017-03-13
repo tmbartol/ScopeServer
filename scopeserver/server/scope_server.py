@@ -183,7 +183,7 @@ class scope_server:
     tt = list(time.localtime(time.time()))
     tt[3:6] = ra_time_array[:]
     ra_time = time.mktime(tuple(tt))
-    dst = 3600.0
+    dst = 0*3600.0
     pos = ((ra_time - time.time() - dst)*self.res_ra/86400.0)%self.res_ra
 #    sys.stderr.write('target ra_time: %02d:%02d:%02d  pos %.9g\r\n' % (ra_time_array[0], ra_time_array[1], ra_time_array[2], pos))
     return (pos)
