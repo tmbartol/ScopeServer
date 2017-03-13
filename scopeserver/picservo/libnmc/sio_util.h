@@ -25,7 +25,7 @@ typedef unsigned long   DWORD;
 extern "C" void ErrorPrinting(int f);
 //extern "C" int ErrorMsgBox(char *msgstr);
 //extern "C" int SimpleMsgBox(char *msgstr);
-extern "C" HANDLE SioOpen(char *name, unsigned int baudrate);
+extern "C" HANDLE SioOpen(const char *name, unsigned int baudrate);
 extern "C" BOOL SioPutChars(HANDLE ComPort, char *stuff, int n);
 extern "C" DWORD SioGetChars(HANDLE ComPort, char *stuff, int n);
 //extern "C" DWORD SioTest(HANDLE ComPort);

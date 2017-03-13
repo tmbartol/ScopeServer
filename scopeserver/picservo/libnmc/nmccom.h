@@ -67,7 +67,7 @@ extern "C" ADCMOD * AdcNewMod();
 extern "C" BOOL AdcGetStat(byte addr);
 
 //Initialization and shutdown
-extern "C" int NmcInit(char *portname, unsigned int baudrate);
+extern "C" int NmcInit(const char *portname, unsigned int baudrate);
 extern "C" void InitVars(void);
 extern "C" BOOL NmcSendCmd(byte addr, byte cmd, char *datastr, byte n, byte stataddr);
 extern "C" void FixSioError(byte addr);

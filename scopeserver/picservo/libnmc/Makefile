@@ -42,7 +42,7 @@ distclean: mostlyclean
 	rm ../libnmc.tar.gz
 
 install:
-	install -m 755 -o root libnmc.so.1.0 $(LIBDIR)
+	install -m 755 libnmc.so.1.0 $(LIBDIR)
 	$(SILENT) cd $(LIBDIR) ; \
 	  ln -s libnmc.so.1.0 libnmc.so.1 ; \
 	  ln -s libnmc.so.1 libnmc.so

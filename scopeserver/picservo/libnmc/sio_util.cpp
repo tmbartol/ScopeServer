@@ -26,7 +26,7 @@ printerrors = f;
 //Opens "COM1:" thru "COM4:", returns a handle to be used by other
 //SIO operations.  Sets up read and write timeouts.
 //*** Add parameter for baud rate ***
-extern "C" HANDLE SioOpen(char *name, unsigned int baudrate)
+extern "C" HANDLE SioOpen(const char *name, unsigned int baudrate)
 {
 BOOL RetStat;
 HANDLE ComHandle;
@@ -132,10 +132,11 @@ extern "C" BOOL SioPutChars(HANDLE ComPort, char *stuff, int n)
 BOOL RetStat;
 int j;
 
+RetStat = false;
 for(j=0;j<n;j++) {
   //printf("Writing %d/%d\n", j, n-1);
   RetStat = write(ComPort,&stuff[j],1);
-  if (RetStat != 1) {
+  if (RetStat != true) {
     printf("SioPutChars failed\n");
     printf("write returned %d errno = %d\n",RetStat,errno);
   }

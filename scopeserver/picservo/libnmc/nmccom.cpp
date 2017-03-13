@@ -113,7 +113,7 @@ for (i=1; i<MAXNUMMOD; i++)
 //---------------------------------------------------------------------------
 //Initialize the network of controllers with sequential addresses starting
 //at 0.  Retunrs the number of controllers found.
-extern "C" int NmcInit(char *portname, unsigned int baudrate)
+extern "C" int NmcInit(const char *portname, unsigned int baudrate)
 {
 DWORD numread;
 byte addr;
@@ -260,6 +260,7 @@ if (stataddr == 0)		//If a group command w/ no leader, add delay then exit
 	return true;
     }
 
+iostat = false;
 switch (mod[stataddr].modtype) {
 	case SERVOMODTYPE:	iostat = ServoGetStat(stataddr); break;
 	case ADCMODTYPE:	iostat = AdcGetStat(stataddr); break;

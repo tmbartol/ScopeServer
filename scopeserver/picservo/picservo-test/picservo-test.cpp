@@ -54,7 +54,9 @@ void Init()
 {
 int i;
 
-nummod = NmcInit("/dev/ttyS0", 19200);  //Controllers on COM1, use 19200 baud
+//nummod = NmcInit("/dev/ttyS0", 19200);  //Controllers on COM1, use 19200 baud
+				        //Returns the number of modules found
+nummod = NmcInit("/dev/ttyUSB0", 19200);  //Controllers on COM1, use 19200 baud
 				        //Returns the number of modules found
 printf("Enumerating devices\n");
 if (nummod==0)  NMCClose();
