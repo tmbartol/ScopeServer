@@ -47,7 +47,7 @@ class nmccom():
     cmd = self.make_cmd(bytearray.fromhex('%02x %02x %02x %02x' % (module, 0x21, addr, group)))
     self.port.write(cmd)
     resp = self.port.read(self.len_status)
-    print('response ', resp)
+    print('set_addr response ', resp)
     if self.checksum_error(resp):
       sys.stderr.write('Error setting module address\n')
     return resp
@@ -57,13 +57,14 @@ class nmccom():
     cmd = self.make_cmd(bytearray.fromhex('%02x %02x' % (0xFF, 0x0F)))
     self.port.write(cmd)
     resp = self.port.read(self.len_status)
+    print('simple_reset response ', resp)
 
 
   def set_pos(self, module, pos):
     cmd = self.make_cmd(bytearray.fromhex('%02x %02x %02x %08x' % (module, 0x50, 0x02, pos)))
     self.port.write(cmd)
     resp = self.port.read(self.len_status)
-    print('response ', resp)
+    print('set_pos response ', resp)
     if self.checksum_error(resp):
       sys.stderr.write('Error setting position\n')
 
@@ -72,7 +73,7 @@ class nmccom():
     cmd = self.make_cmd(bytearray.fromhex('%02x %02x' % (module, 0x00)))
     self.port.write(cmd)
     resp = self.port.read(self.len_status)
-    print('response ', resp)
+    print('reset_pos response ', resp)
     if self.checksum_error(resp):
       sys.stderr.write('Error resetting position\n')
 
@@ -81,7 +82,7 @@ class nmccom():
     cmd = self.make_cmd(bytearray.fromhex('%02x %02x %02x' % (module, 0x12, status_bits)))
     self.port.write(cmd)
     resp = self.port.read(self.len_status)
-    print('response ', resp)
+    print('define_status response ', resp)
     if self.checksum_error(resp):
       sys.stderr.write('Error defining status\n')
 
@@ -107,8 +108,11 @@ class nmccom():
   def set_baud(self, baudrate):
     cmd = self.make_cmd(bytearray.fromhex('%02x %02x' % (0xFF, self.baud_code[baudrate])))
     self.port.write(cmd)
+#    self.port.close()
     self.port.baudrate = baudrate
+#    self.port.open()
     resp = self.port.read(self.len_status)
+    print('set_baud response ', resp)
 
 
   def make_cmd(self, bytes_arg):
