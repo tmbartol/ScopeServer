@@ -13,6 +13,18 @@
 	<tr><th class="serverlabel">GOTO Target:</th><th class="displayvalue" id="target_position_dec"></th><th class="displayvalue" id="target_position_ra"></th></tr>
 </table>
 
+
+<div>
+
+  <form method="POST">
+    {% csrf_token %}
+    <button class="btn btn-primary" name="_reboot" value="reboot">Reboot &raquo;</button>
+    <button class="btn btn-warning" name="_shutdown" value="shutdown">Shutdown &raquo;</button>
+  </form>
+
+</div>
+
+
 <script>
 function get_scope_status(){
 	jQuery.ajax({
