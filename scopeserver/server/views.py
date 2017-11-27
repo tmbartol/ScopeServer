@@ -23,12 +23,13 @@ def send_scopeserver_cmd(cmd):
 
       # Receive data from the server and shut down
       response = scope_socket.recv(1024).decode('ascii')
+  except:
+      raise(Exception("ScopeServer not found at {0}:{1}".format(HOST, PORT)))  #This is new. 
   finally:
       scope_socket.close()
-
 #  print("Sent:     {}".format(cmd))
 #  print("Received: {}".format(response))
-  return response
+  return response #Response will not exist if there is an exception. 
 
 
 def control(request):
