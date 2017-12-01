@@ -31,6 +31,22 @@ class NmcNet():
     self.SEND_DEV_TYPE =  0x20
     self.SEND_POS_ERR =   0x40
     self.SEND_PATH_PTS =  0x80
+
+    # Servo I/O Control bit flags
+    # limit mode flags:
+    self.LIMIT_OFF =       0x04
+    self.LIMIT_STOP =      0x08
+
+    # output mode flags:
+    self.PWM_DIR_MODE =    0x00
+    self.PH3_MODE =        0x10
+    self.ANTIPHASE_MODE =  0x20
+
+    # Fast Path mode flag:
+    self.FASTPATH_MODE =   0x40
+
+    # Step & Direction flag:
+    self.STEP_DIR_MODE =   0x80
     
     self.device_dict = {}
     self.device_dict[0] = 'PIC-SERVO SC'
@@ -130,6 +146,7 @@ class NmcNet():
     if checksum_error:
       sys.stderr.write('Error defining status\n')
     if checksum_error != 2:
+      self.len_status = 1 + 1
       extra_bytes = 0
       if status_bits & self.SEND_POS:
         extra_bytes += 4
@@ -199,6 +216,54 @@ class NmcNet():
     return (pos, checksum_error)
 
 
+  def ServoSetGain(self, module, Kp, Kd, Ki, IL, OL, CL, EL, SR, DB, SM):
+    cmd = bytearray.fromhex('%02x %02x %04x %04x %04x %04x %02x %02x %04x %02x %02x %02x' % (module, 0xF6, Kp, Kd, Ki, IL, OL, CL, EL, SR, DB, SM))
+    resp, checksum_error = self.send_cmd(cmd, 0)
+    print('ServoSetGain response ', resp)
+    if checksum_error:
+      sys.stderr.write('Error setting servo gain\n')
+    return (resp, checksum_error)
+
+
+  def ServoStopAbrupt(self, module):
+    cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x17, 0x05))
+    resp, checksum_error = self.send_cmd(cmd, 0)
+    print('ServoStopAbrupt response ', resp)
+    if checksum_error:
+      sys.stderr.write('Error in abrupt stop\n')
+    return (resp, checksum_error)
+
+
+  def ServoStopSmooth(self, module):
+    cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x17, 0x09))
+    resp, checksum_error = self.send_cmd(cmd, 0)
+    print('ServoStopSmooth response ', resp)
+    if checksum_error:
+      sys.stderr.write('Error in smooth stop\n')
+    return (resp, checksum_error)
+
+
+  def ServoStopHere(self, module, pos):
+    cmd = bytearray.fromhex('%02x %02x %02x %08x' % (module, 0x57, 0x11, pos))
+    resp, checksum_error = self.send_cmd(cmd, 0)
+    print('ServoStopSmooth response ', resp)
+    if checksum_error:
+      sys.stderr.write('Error in smooth stop\n')
+    return (resp, checksum_error)
+
+
+  def ServoIOControl(self, module, limit_mode = False, output_mode = self.PH3_MODE, fast_path = False, step_dir_mode = False):
+    if step_dir_mode:
+      limit_mode = False
+    control_byte = 0x00 | limit_mode | output_mode | step_dir_mode
+    cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x18, control_byte))
+    resp, checksum_error = self.send_cmd(cmd, 0)
+    print('ServoIOControl response ', resp)
+    if checksum_error:
+      sys.stderr.write('Error setting servo I/O control\n')
+    return (resp, checksum_error)
+
+
   def send_cmd(self, cmd, len_response):
     full_cmd = bytes([0xAA]) + cmd + bytes([self.checksum_8(cmd)])
     self.port.write(full_cmd)
@@ -206,7 +271,7 @@ class NmcNet():
     checksum_error = self.checksum_check(resp)
     if checksum_error == 2:
       module = int.from_bytes(cmd[1:2], 'big', signed = False)
-      sys.stderr.write('Checksum error reported by module 0x%02x\n' % (module))
+      sys.stderr.write('Host-to-NMC checksum error reported by module 0x%02x\n' % (module))
     return (resp, checksum_error)
 
 
