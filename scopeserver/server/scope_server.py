@@ -11,6 +11,7 @@ import datetime
 import re
 import math
 import numpy as np
+import gpsd
 
 
 # Class to get raw characters from terminal input
@@ -91,8 +92,15 @@ class scope_server:
 
     self.timezone = time.timezone
 
-    self.site_latitude = 33.083
-    self.site_longitude = 117.25
+    gpsd.connect()
+
+    lat, lon = gpsd.get_current().position()
+    self.site_latitude = lat
+    self.site_longitude = lon
+
+#    self.site_latitude = 33.0831
+#    self.site_longitude = -117.2455
+
     self.target_ra_pos = 0.0
     self.target_ra_time = '00:00:00'
     self.target_ra_time_array = [0,0,0]
@@ -589,7 +597,7 @@ if (__name__ == '__main__'):
 
   if (len(sys.argv)<3):
     print('\nUsage: %s server_address port\n' % (sys.argv[0]))
-    print('   Example: %s 10.0.1.12 4030\n' % (sys.argv[0]))
+    print('   Example: %s 10.0.1.21 4030\n' % (sys.argv[0]))
     sys.exit()
 
   server_address = sys.argv[1]
