@@ -2,69 +2,82 @@ import serial
 import time
 import sys
 
+# Baud rates for NMC network
+nmc_baud_rates = [9600, 19200, 57600, 115200, 230400]
+nmc_baud_code = {}
+nmc_baud_code[9600] =  127
+nmc_baud_code[19200] =  64
+nmc_baud_code[57600] =  21
+nmc_baud_code[115200] = 10
+nmc_baud_code[230400] =  5
 
+# Device codes on NMC network
+nmc_device_dict = {}
+nmc_device_dict[0] = 'PIC-SERVO SC'
+nmc_device_dict[2] = 'PIC-I/O'
+nmc_device_dict[3] = 'PIC-STEP'
+
+# Status Byte bit masks
+MOVE_DONE =    0x01
+CKSUM_ERR =    0x02
+PWR_ON =       0x04
+POS_ERR =      0x08
+LIMIT1 =       0x10
+LIMIT2 =       0x20
+HOME_IN_PROG = 0x40
+
+# Status Data bit masks
+SEND_POS =       0x01
+SEND_CUR_SENSE = 0x02
+SEND_VEL =       0x04
+SEND_AUX =       0x08
+SEND_HOME_POS =  0x10
+SEND_DEV_TYPE =  0x20
+SEND_POS_ERR =   0x40
+SEND_PATH_PTS =  0x80
+
+# Servo Module LOAD_TRAJ control byte bit definitions:
+LOAD_POS =          0x01  # +4 bytes
+LOAD_VEL =          0x02  # +4 bytes
+LOAD_ACC =          0x04  # +4 bytes
+LOAD_PWM =          0x08  # +1 byte
+ENABLE_SERVO =      0x10  # 1 = servo mode, 0 = PWM mode
+VEL_MODE =          0x20  # 1 = velocity mode, 0 = trap. position mode
+REVERSE =           0x40  # 1 = command neg. PWM or vel, 0 = positive
+MOVE_REL =          0x40  # 1 = move relative, 0 = move absolute
+START_NOW =         0x80  # 1 = start now, 0 = wait for START_MOVE command
+
+
+# Servo I/O Control bit flags
+# limit mode flags:
+LIMIT_OFF =       0x04
+LIMIT_STOP =      0x08
+
+# output mode flags:
+PWM_DIR_MODE =    0x00
 PH3_MODE =        0x10
+ANTIPHASE_MODE =  0x20
+
+# Fast Path mode flag:
+FASTPATH_MODE =   0x40
+
+# Step & Direction flag:
+STEP_DIR_MODE =   0x80
+
 
 class NmcNet():
 
   def __init__(self):
-    self.baud_rates = [9600, 19200, 57600, 115200, 230400]
-    self.baud_code = {}
-    self.baud_code[9600] =  127
-    self.baud_code[19200] =  64
-    self.baud_code[57600] =  21
-    self.baud_code[115200] = 10
-    self.baud_code[230400] =  5
-
-    # Status Byte bit masks
-    self.MOVE_DONE =    0x01
-    self.CKSUM_ERR =    0x02
-    self.PWR_ON =       0x04
-    self.POS_ERR =      0x08
-    self.LIMIT1 =       0x10
-    self.LIMIT2 =       0x20
-    self.HOME_IN_PROG = 0x40
-
-    # Status Data bit masks
-    self.SEND_POS =       0x01
-    self.SEND_CUR_SENSE = 0x02
-    self.SEND_VEL =       0x04
-    self.SEND_AUX =       0x08
-    self.SEND_HOME_POS =  0x10
-    self.SEND_DEV_TYPE =  0x20
-    self.SEND_POS_ERR =   0x40
-    self.SEND_PATH_PTS =  0x80
-
-    # Servo I/O Control bit flags
-    # limit mode flags:
-    self.LIMIT_OFF =       0x04
-    self.LIMIT_STOP =      0x08
-
-    # output mode flags:
-    self.PWM_DIR_MODE =    0x00
-    self.PH3_MODE =        0x10
-    self.ANTIPHASE_MODE =  0x20
-
-    # Fast Path mode flag:
-    self.FASTPATH_MODE =   0x40
-
-    # Step & Direction flag:
-    self.STEP_DIR_MODE =   0x80
-    
-    self.device_dict = {}
-    self.device_dict[0] = 'PIC-SERVO SC'
-    self.device_dict[2] = 'PIC-I/O'
-    self.device_dict[3] = 'PIC-STEP'
-
+    self.len_status = 1 + 1
+    self.port = None
+    self.num_nmc = 0
 
   def NmcInit(self, port = '/dev/ttyUSB0', baudrate=19200, timeout = 0.02, num_nmc_expected = 1, max_tries = 5):
-
-    self.len_status = 1 + 1
 
     # Starting from an unknown state, reset NMC network back to power-up state 
     # Scan baud rates and send simple reset command
     print('Resetting NMC Network to Power-up State...')
-    for baud in self.baud_rates:
+    for baud in nmc_baud_rates:
       self.port = serial.Serial(port, baudrate=baud, bytesize=serial.EIGHTBITS,parity=serial.PARITY_NONE,stopbits=serial.STOPBITS_ONE, timeout = timeout)
       self.port.write(bytes(20))
       time.sleep(0.002)
@@ -168,8 +181,8 @@ class NmcNet():
   
   def NmcSimpleReset(self):
     cmd = bytearray.fromhex('%02x %02x' % (0xFF, 0x0F))
-    resp, checksum_error = self.send_cmd(cmd, 0)
-    print('NmcSimpleReset response ', resp)
+    self.send_cmd(cmd, 0, expect_status=False)
+    print('NmcSimpleReset')
 
 
   def NmcHardReset(self, module):
@@ -180,7 +193,7 @@ class NmcNet():
 
   def NmcSetBaud(self, baudrate):
     print('Switching to Baudrate: %d' % (baudrate))
-    cmd = bytearray.fromhex('%02x %02x %02x' % (0xFF, 0x1A, self.baud_code[baudrate]))
+    cmd = bytearray.fromhex('%02x %02x %02x' % (0xFF, 0x1A, nmc_baud_code[baudrate]))
     full_cmd = bytes([0xAA]) + cmd + bytes([self.checksum_8(cmd)])
     self.port.write(full_cmd)
     time.sleep(0.1)
@@ -201,21 +214,21 @@ class NmcNet():
     if checksum_error != 2:
       self.len_status = 1 + 1
       extra_bytes = 0
-      if status_bits & self.SEND_POS:
+      if status_bits & SEND_POS:
         extra_bytes += 4
-      if status_bits & self.SEND_CUR_SENSE:
+      if status_bits & SEND_CUR_SENSE:
         extra_bytes += 1
-      if status_bits & self.SEND_VEL:
+      if status_bits & SEND_VEL:
         extra_bytes += 2
-      if status_bits & self.SEND_AUX:
+      if status_bits & SEND_AUX:
         extra_bytes += 1
-      if status_bits & self.SEND_HOME_POS:
+      if status_bits & SEND_HOME_POS:
         extra_bytes += 4
-      if status_bits & self.SEND_DEV_TYPE:
+      if status_bits & SEND_DEV_TYPE:
         extra_bytes += 2
-      if status_bits & self.SEND_POS_ERR:
+      if status_bits & SEND_POS_ERR:
         extra_bytes += 2
-      if status_bits & self.SEND_PATH_PTS:
+      if status_bits & SEND_PATH_PTS:
         extra_bytes += 1
       self.len_status += extra_bytes
     return (resp, checksum_error)
@@ -235,7 +248,7 @@ class NmcNet():
     status_dict['vel'] = int.from_bytes(resp[6:8], 'big', signed = True)
     status_dict['aux_status'] = int.from_bytes(resp[8:9], 'big', signed = False)
     status_dict['home_pos'] = int.from_bytes(resp[9:13], 'big', signed = True)
-    status_dict['device_type'] = self.device_dict[int.from_bytes(resp[13:14], 'big', signed = False)]
+    status_dict['device_type'] = nmc_device_dict[int.from_bytes(resp[13:14], 'big', signed = False)]
     status_dict['device_version'] = int.from_bytes(resp[14:15], 'big', signed = False)
     status_dict['pos_error'] = int.from_bytes(resp[15:17], 'big', signed = True)
     status_dict['path_pts'] = int.from_bytes(resp[17:18], 'big', signed = False)
@@ -288,6 +301,15 @@ class NmcNet():
     return (resp, checksum_error)
 
 
+  def ServoStopMotor(self, module):
+    cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x17, 0x03))
+    resp, checksum_error = self.send_cmd(cmd, 0)
+    print('ServoStopMotor response ', resp)
+    if checksum_error:
+      sys.stderr.write('Error in stop motor\n')
+    return (resp, checksum_error)
+
+
   def ServoStopAbrupt(self, module):
     cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x17, 0x05))
     resp, checksum_error = self.send_cmd(cmd, 0)
@@ -309,9 +331,30 @@ class NmcNet():
   def ServoStopHere(self, module, pos):
     cmd = bytearray.fromhex('%02x %02x %02x %08x' % (module, 0x57, 0x11, pos))
     resp, checksum_error = self.send_cmd(cmd, 0)
-    print('ServoStopSmooth response ', resp)
+    print('ServoStopHere response ', resp)
     if checksum_error:
-      sys.stderr.write('Error in smooth stop\n')
+      sys.stderr.write('Error in stop here\n')
+    return (resp, checksum_error)
+
+
+  def ServoLoadTraj(self, module, mode, pos, vel, acc, pwm):
+    n = 1 + ((mode & LOAD_POS) > 0)*4 + ((mode & LOAD_VEL) > 0)*4 + ((mode & LOAD_ACC) > 0)*4 + ((mode & LOAD_PWM) > 0)*1 
+    cmd_p1 = bytearray.fromhex('%02x %02x %02x' % (module, 16*n+ 0x04, mode))
+    cmd_p2 = b''
+    if (mode & LOAD_POS):
+      cmd_p2 = cmd_p2 + bytearray.fromhex('%08x' % (pos))
+    if (mode & LOAD_VEL):
+      cmd_p2 = cmd_p2 + bytearray.fromhex('%08x' % (vel))
+    if (mode & LOAD_ACC):
+      cmd_p2 = cmd_p2 + bytearray.fromhex('%08x' % (acc))
+    if (mode & LOAD_PWM):
+      cmd_p2 = cmd_p2 + bytearray.fromhex('%02x' % (pwm))
+    cmd = cmd_p1 + cmd_p2
+#    print('Sending Trajectory Command: %s' % (cmd))
+    resp, checksum_error = self.send_cmd(cmd, 0)
+    print('ServoLoadTraj response ', resp)
+    if checksum_error:
+      sys.stderr.write('Error in load trajectory\n')
     return (resp, checksum_error)
 
 
@@ -327,10 +370,19 @@ class NmcNet():
     return (resp, checksum_error)
 
 
-  def send_cmd(self, cmd, len_response):
+  def send_cmd(self, cmd, len_response, expect_status = True):
     full_cmd = bytes([0xAA]) + cmd + bytes([self.checksum_8(cmd)])
     self.port.write(full_cmd)
     resp = self.port.read(self.len_status + len_response)
+
+#    if expect_status:
+#      resp = self.port.read(self.len_status + len_response)
+#    elif len_response:
+#      resp = self.port.read(len_response)
+#    else:
+#      self.port.flushInput()
+#      return (None)
+
     checksum_error = self.checksum_check(resp)
     if checksum_error == 2:
       module = int.from_bytes(cmd[1:2], 'big', signed = False)
@@ -346,7 +398,7 @@ class NmcNet():
       if self.checksum_8(response[:-1]) != response[-1]:
         return 1
       # if so then check if previously sent command was received correctly
-      return (response[0] & self.CKSUM_ERR)
+      return (response[0] & CKSUM_ERR)
     else:
       return 1
 
