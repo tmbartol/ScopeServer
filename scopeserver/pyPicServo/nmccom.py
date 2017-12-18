@@ -65,14 +65,26 @@ FASTPATH_MODE =   0x40
 STEP_DIR_MODE =   0x80
 
 
+class NmcModule():
+
+  def __init__(self, addr, name):
+    self.addr = addr
+    self.name = name
+    self.type = None
+    self.status_bytes = None
+    self.status_dict = None
+    self.resp = None
+
+
 class NmcNet():
 
   def __init__(self):
     self.len_status = 1 + 1
     self.port = None
-    self.num_nmc = 0
+    self.num_modules = 0
+    self.modules = {}
 
-  def NmcInit(self, port = '/dev/ttyUSB0', baudrate=19200, timeout = 0.02, num_nmc_expected = 1, max_tries = 5):
+  def NmcInit(self, module_names = None, port = '/dev/ttyUSB0', baudrate=19200, timeout = 0.02, max_tries = 5):
 
     # Starting from an unknown state, reset NMC network back to power-up state 
     # Scan baud rates and send simple reset command
@@ -83,6 +95,7 @@ class NmcNet():
       time.sleep(0.002)
       self.port.flushInput()
       self.NmcSimpleReset()
+      time.sleep(0.002)
       self.port.close()
     print('NMC Network Now Reset to Power-up State')
 
@@ -91,28 +104,26 @@ class NmcNet():
     print('Initialing NMC Network...')
     self.port = serial.Serial(port, baudrate=19200, bytesize=serial.EIGHTBITS,parity=serial.PARITY_NONE,stopbits=serial.STOPBITS_ONE, timeout = timeout)
 
-    self.num_nmc = 0
+    num_modules_expected = len(module_names)
+    self.num_modules = 0
     num_tries = 0
-    while (self.num_nmc != num_nmc_expected) & (num_tries < max_tries):
+    while (self.num_modules != num_modules_expected) & (num_tries < max_tries):
       # Clear nmc bus
       self.port.write(bytes(20))
       time.sleep(0.002)
       self.port.flushInput()
 
       self.NmcSimpleReset()
-      addr = 0
-      if not self.NmcSetAddr(0x00, addr+1, 0xFF):
+
+      addr = 1
+      while (not self.NmcSetAddr(0x00, addr, 0xFF)):
+        mod = NmcModule(addr,module_names[addr-1])
+        self.modules[mod.name] = mod
         addr += 1
-      self.num_nmc = addr
+      self.num_modules = addr-1
       num_tries += 1
 
-#      while self.NmcSetAddr(0x00, addr+1, 0xFF):
-#        addr += 1
-#        print('Set address of module to:  %d' % (addr))
-#      self.num_nmc = addr
-#      num_tries += 1
-
-    if self.num_nmc == num_nmc_expected:
+    if self.num_modules == num_modules_expected:
       print('')
       print('Successfully Initialized NMC Network in %d Tries' % (num_tries))
     else:
@@ -120,19 +131,20 @@ class NmcNet():
       print('Failed to Initialize NMC Network in %d Tries' % (num_tries))
 
     print('')
-    print('Found %d NMC Modules of %d Expected' % (self.num_nmc, num_nmc_expected))
+    print('Found %d NMC Modules of %d Expected' % (self.num_modules, num_modules_expected))
 
     print('')
     print('Communicating with NMC Network at Baudrate: %d' % (self.port.getBaudrate()))
 
-    for addr in range(1,self.num_nmc+1):
+    for module_name in sorted(self.modules.keys()):
+      mod = self.modules[module_name]
       print('')
-      print('Sending NoOp to Check Status of NMC module %d: ' % (addr))
-      resp, checksum_error = self.NmcNoOp(addr)
+      print('Sending NoOp to Check Status of NMC module %d: ' % (mod.addr))
+      resp, checksum_error = self.NmcNoOp(mod.addr)
       print('NmcNoOp response ', resp)
       print('')
-      print('Full Status of NMC module %d: ' % (addr))
-      status_dict = self.NmcReadFullStatus(addr)
+      print('Full Status of NMC module %s at addr %d: ' % (mod.name,mod.addr))
+      status_dict = self.NmcReadFullStatus(mod.addr)
       if status_dict:
         print('  pos:             %d' % (status_dict['pos']))
         print('  cur_sense:       %d' % (status_dict['cur_sense']))
@@ -151,10 +163,11 @@ class NmcNet():
     print('')
     print('Communicating with NMC Network at Baudrate: %d' % (self.port.getBaudrate()))
 
-    for addr in range(1,self.num_nmc+1):
+    for module_name in sorted(self.modules.keys()):
+      mod = self.modules[module_name]
       print('')
-      print('Full Status of NMC module %d: ' % (addr))
-      status_dict = self.NmcReadFullStatus(addr)
+      print('Full Status of NMC module %s at addr %d: ' % (mod.name,mod.addr))
+      status_dict = self.NmcReadFullStatus(mod.addr)
       if status_dict:
         print('  pos:             %d' % (status_dict['pos']))
         print('  cur_sense:       %d' % (status_dict['cur_sense']))
@@ -185,10 +198,17 @@ class NmcNet():
     print('NmcSimpleReset')
 
 
-  def NmcHardReset(self, module):
+  def NmcConfigReset(self, module):
     cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x1F, 0x00))
     resp, checksum_error = self.send_cmd(cmd, 0)
-    print('NmcHardReset response ', resp)
+    print('NmcConfigReset response ', resp)
+
+
+  def NmcShutdown(self):
+    print('Shutting Down NMC Network')
+    self.NmcSimpleReset()
+    time.sleep(0.002)
+    self.port.close()
 
 
   def NmcSetBaud(self, baudrate):
@@ -198,39 +218,41 @@ class NmcNet():
     self.port.write(full_cmd)
     time.sleep(0.1)
     self.port.setBaudrate(baudrate)
-    for addr in range(1,self.num_nmc+1):
+    for module_name in sorted(self.modules.keys()):
+      mod = self.modules[module_name]
       print('')
-      print('Sending NoOp to Check Status of NMC module %d: ' % (addr))
-      resp, checksum_error = self.NmcNoOp(addr)
+      print('Sending NoOp to Check Status of NMC module %d: ' % (mod.addr))
+      resp, checksum_error = self.NmcNoOp(mod.addr)
       print('NmcNoOp response ', resp)
 
 
   def NmcDefineStatusData(self, module, status_bits):
     cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x12, status_bits))
+    self.len_status = 1 + 1
+    extra_bytes = 0
+    if status_bits & SEND_POS:
+      extra_bytes += 4
+    if status_bits & SEND_CUR_SENSE:
+      extra_bytes += 1
+    if status_bits & SEND_VEL:
+      extra_bytes += 2
+    if status_bits & SEND_AUX:
+      extra_bytes += 1
+    if status_bits & SEND_HOME_POS:
+      extra_bytes += 4
+    if status_bits & SEND_DEV_TYPE:
+      extra_bytes += 2
+    if status_bits & SEND_POS_ERR:
+      extra_bytes += 2
+    if status_bits & SEND_PATH_PTS:
+      extra_bytes += 1
+    self.len_status += extra_bytes
     resp, checksum_error = self.send_cmd(cmd, 0)
-    print('NmcDefineStatus response ', resp)
+    print('NmcDefineStatusData response ', resp)
     if checksum_error:
       sys.stderr.write('Error defining status\n')
-    if checksum_error != 2:
+    if checksum_error == 2:
       self.len_status = 1 + 1
-      extra_bytes = 0
-      if status_bits & SEND_POS:
-        extra_bytes += 4
-      if status_bits & SEND_CUR_SENSE:
-        extra_bytes += 1
-      if status_bits & SEND_VEL:
-        extra_bytes += 2
-      if status_bits & SEND_AUX:
-        extra_bytes += 1
-      if status_bits & SEND_HOME_POS:
-        extra_bytes += 4
-      if status_bits & SEND_DEV_TYPE:
-        extra_bytes += 2
-      if status_bits & SEND_POS_ERR:
-        extra_bytes += 2
-      if status_bits & SEND_PATH_PTS:
-        extra_bytes += 1
-      self.len_status += extra_bytes
     return (resp, checksum_error)
 
 
@@ -286,7 +308,7 @@ class NmcNet():
     cmd = bytearray.fromhex('%02x %02x %02x' % (module, 0x13, 0x01))
     resp, checksum_error = self.send_cmd(cmd, 4)
     if checksum_error:
-      sys.stderr.write('Error getting status\n')
+      sys.stderr.write('Error getting position status\n')
       return (None, checksum_error)
     pos = int.from_bytes(resp[1:5], 'big', signed = True)
     return (pos, checksum_error)
