@@ -66,41 +66,64 @@ STEP_DIR_MODE =   0x80
 
 
 
+# Compute 8-bit checksum of an array of bytes
+def checksum_8(bytes_arg):
+  return sum(bytes_arg)%256
+
+
+
 class NmcModule():
 
-  def __init__(self, nmc_net, addr, name):
-    self.nmc_net = nmc_net
-    self.addr = None
+  def __init__(self, name, nmc_net, addr):
     self.name = name
-    self.type = None
+    self.nmc_net = nmc_net
+    self.addr = 0
+    self.group = None
+    self.device_type = None
+    self.device_version = None
     self.len_status = 1 + 1
-    self.status_bytes = None
+    self.status_data = None
     self.status_dict = None
-    self.resp = None
+    self.response = None
     self.checksum_error = None
-    self.SetAddr(0x00, addr, 0xFF)
+    self.cmd_msg = ''
+    self.err_msg = ''
+    self.verbosity = 2 # 0: quiet,  1: errors only,  2: error and cmd messages
+    self.SetAddr(addr)
 
 
-  def SetAddr(self, curr_addr, new_addr, group):
-    cmd = bytearray.fromhex('%02x %02x %02x %02x' % (curr_addr, 0x21, new_addr, group))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('SetAddr response ', self.resp, 'checksum_error ', self.checksum_error)
+  def PrintMsg(self):
+    if self.verbosity:
+      if self.err_msg:
+        sys.stderr.write('>>> NMC Error: Module %s at addr %d:\n    >>> %s' % (self.name, self.addr, self.err_msg))
+        self.err_msg = ''
+      if self.verbosity == 2:
+        if self.cmd_msg:
+          sys.stdout.write('CMD Status: Module %s at addr %d:\n    %s' % (self.name, self.addr, self.cmd_msg))
+          self.cmd_msg = ''
+
+
+  def SetAddr(self, new_addr, group=0xFF):
+    cmd = bytes([self.addr, 0x21, new_addr, group])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('SetAddr response: %s  checksum_error: %a\n' % (self.response, self.checksum_error))
     if self.checksum_error:
-      self.addr = curr_addr
-      sys.stderr.write('Error setting module address\n')
+      self.err_msg = 'SetAddr: Error setting module address\n'
     else:
       self.addr = new_addr
-    return (self.checksum_error)
+      self.group = group
+    self.PrintMsg()
   
 
   def ConfigReset(self):
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x1F, 0x00))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ConfigReset response ', self.resp)
+    cmd = bytes([self.addr, 0x1F, 0x00])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ConfigReset response: %s\n' % (self.response))
+    self.PrintMsg()
 
 
   def DefineStatusData(self, status_bits):
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x12, status_bits))
+    cmd = bytes([self.addr, 0x12, status_bits])
     self.len_status = 1 + 1
     extra_bytes = 0
     if status_bits & SEND_POS:
@@ -120,149 +143,222 @@ class NmcModule():
     if status_bits & SEND_PATH_PTS:
       extra_bytes += 1
     self.len_status += extra_bytes
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('DefineStatusData response ', self.resp)
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('DefineStatusData response: %s  Status Bits: 0x%02x\n' % (self.response, status_bits))
     if self.checksum_error:
-      sys.stderr.write('Error defining status\n')
+      self.err_msg = ('DefineStatusData: Error defining status\n')
     if self.checksum_error == 2:
       self.len_status = 1 + 1
-    return (self.resp, self.checksum_error)
+    self.PrintMsg()
 
 
   def ReadFullStatus(self):
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x13, 0xFF))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 17 + self.len_status)
+    cmd = bytes([self.addr, 0x13, 0xFF])
+    self.SendCmd(cmd, 17 + self.len_status)
+    self.cmd_msg = ('ReadFullStatus response: %s\n' % (self.response))
     if self.checksum_error:
-      print('ReadFullStatus response ', self.resp)
-      sys.stderr.write('Error getting full status\n')
-      return (None)
+      self.err_msg = ('ReadFullStatus: Error reading full status\n')
+      self.status_dict = None
+      return
+    self.PrintMsg()
 
     self.status_dict = {}
-    self.status_dict['pos'] = int.from_bytes(self.resp[1:5], 'big', signed = True)
-    self.status_dict['cur_sense'] = int.from_bytes(self.resp[5:6], 'big', signed = False)
-    self.status_dict['vel'] = int.from_bytes(self.resp[6:8], 'big', signed = True)
-    self.status_dict['aux_status'] = int.from_bytes(self.resp[8:9], 'big', signed = False)
-    self.status_dict['home_pos'] = int.from_bytes(self.resp[9:13], 'big', signed = True)
-    self.status_dict['device_type'] = nmc_device_dict[int.from_bytes(self.resp[13:14], 'big', signed = False)]
-    self.status_dict['device_version'] = int.from_bytes(self.resp[14:15], 'big', signed = False)
-    self.status_dict['pos_error'] = int.from_bytes(self.resp[15:17], 'big', signed = True)
-    self.status_dict['path_pts'] = int.from_bytes(self.resp[17:18], 'big', signed = False)
-    return (self.status_dict)
+    self.status_dict['pos'] = int.from_bytes(self.response[1:5], 'big', signed = True)
+    self.status_dict['cur_sense'] = int.from_bytes(self.response[5:6], 'big', signed = False)
+    self.status_dict['vel'] = int.from_bytes(self.response[6:8], 'big', signed = True)
+    self.status_dict['aux_status'] = int.from_bytes(self.response[8:9], 'big', signed = False)
+    self.status_dict['home_pos'] = int.from_bytes(self.response[9:13], 'big', signed = True)
+    self.status_dict['device_type'] = nmc_device_dict[int.from_bytes(self.response[13:14], 'big', signed = False)]
+    self.device_type = self.status_dict['device_type']
+    self.status_dict['device_version'] = int.from_bytes(self.response[14:15], 'big', signed = False)
+    self.device_version = self.status_dict['device_version']
+    self.status_dict['pos_error'] = int.from_bytes(self.response[15:17], 'big', signed = True)
+    self.status_dict['path_pts'] = int.from_bytes(self.response[17:18], 'big', signed = False)
 
 
   def NoOp(self):
-    cmd = bytearray.fromhex('%02x %02x' % (self.addr, 0x0E))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
+    cmd = bytes([self.addr, 0x0E])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('NoOp response: %s\n' % (self.response))
     if self.checksum_error:
-      print('NoOp response ', self.resp)
-      sys.stderr.write('Error sending NoOp\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('NoOp: Error sending NoOp\n')
+    self.PrintMsg()
 
 
   def ServoSetPos(self, pos):
-    cmd = bytearray.fromhex('%02x %02x %02x %08x' % (self.addr, 0x50, 0x02, pos))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoSetPos response ', self.resp)
+    cmd = bytes([self.addr, 0x50, 0x02])
+    cmd = cmd + bytes.fromhex('%08x' % (pos))
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoSetPos response: %s  Pos: %d\n' % (self.response, pos))
     if self.checksum_error:
-      sys.stderr.write('Error setting position\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoSetPos: Error setting position\n')
+    self.PrintMsg()
 
   
   def ServoResetPos(self):
-    cmd = bytearray.fromhex('%02x %02x' % (self.addr, 0x00))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoResetPos response ', self.resp)
+    cmd = bytes([self.addr, 0x00])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoResetPos response: %s  Pos: %d\n' % (self.response, 0))
     if self.checksum_error:
-      sys.stderr.write('Error resetting position\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoResetPos: Error resetting position\n')
+    self.PrintMsg()
 
 
   def ServoGetPos(self):
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x13, 0x01))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 4 + self.len_status)
+    cmd = bytes([self.addr, 0x13, 0x01])
+    self.SendCmd(cmd, 4 + self.len_status)
     if self.checksum_error:
-      sys.stderr.write('Error getting position status\n')
-      return (None, self.checksum_error)
-    pos = int.from_bytes(self.resp[1:5], 'big', signed = True)
-    return (pos, self.checksum_error)
+      self.err_msg = ('ServoGetPos: Error getting position\n')
+      pos = None
+    else:
+      pos = int.from_bytes(self.response[1:5], 'big', signed = True)
+    self.cmd_msg = ('ServoGetPos response: %s  Pos: %a\n' % (self.response, pos))
+    self.PrintMsg()
+    return (pos)
 
 
   def ServoSetGain(self, Kp, Kd, Ki, IL, OL, CL, EL, SR, DB, SM):
-    cmd = bytearray.fromhex('%02x %02x %04x %04x %04x %04x %02x %02x %04x %02x %02x %02x' % (self.addr, 0xF6, Kp, Kd, Ki, IL, OL, CL, EL, SR, DB, SM))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoSetGain response ', self.resp)
+    cmd = bytes.fromhex('%02x %02x %04x %04x %04x %04x %02x %02x %04x %02x %02x %02x' % (self.addr, 0xF6, Kp, Kd, Ki, IL, OL, CL, EL, SR, DB, SM))
+    self.SendCmd(cmd, 0 + self.len_status)
+    if self.verbosity == 2:
+      self.cmd_msg = ('ServoSetGain response: %s\n' % (self.response))
+      self.cmd_msg += ('    Kp = %d\n' % (Kp))
+      self.cmd_msg += ('    Kd = %d\n' % (Kd))
+      self.cmd_msg += ('    Ki = %d\n' % (Ki))
+      self.cmd_msg += ('    IL = %d\n' % (IL))
+      self.cmd_msg += ('    OL = %d\n' % (OL))
+      self.cmd_msg += ('    CL = %d\n' % (CL))
+      self.cmd_msg += ('    EL = %d\n' % (EL))
+      self.cmd_msg += ('    SR = %d\n' % (SR))
+      self.cmd_msg += ('    DB = %d\n' % (DB))
+      self.cmd_msg += ('    SM = %d\n' % (SM))
     if self.checksum_error:
-      sys.stderr.write('Error setting servo gain\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoSetGain: Error setting servo gain\n')
+    self.PrintMsg()
 
 
   def ServoStopMotor(self):
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x17, 0x03))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoStopMotor response ', self.resp)
+    cmd = bytes([self.addr, 0x17, 0x03])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoStopMotor response: %s\n' % (self.response))
     if self.checksum_error:
-      sys.stderr.write('Error in stop motor\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoStopMotor: Error in stop motor\n')
+    self.PrintMsg()
 
 
   def ServoStopAbrupt(self):
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x17, 0x05))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoStopAbrupt response ', self.resp)
+    cmd = bytes([self.addr, 0x17, 0x05])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoStopAbrupt response: %s\n' % (self.response))
     if self.checksum_error:
-      sys.stderr.write('Error in abrupt stop\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoStopAbrupt: Error in abrupt stop\n')
+    self.PrintMsg()
 
 
   def ServoStopSmooth(self):
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x17, 0x09))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoStopSmooth response ', self.resp)
+    cmd = bytes([self.addr, 0x17, 0x09])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoStopSmooth response: %s\n' % (self.response))
     if self.checksum_error:
-      sys.stderr.write('Error in smooth stop\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoStopSmooth: Error in smooth stop\n')
+    self.PrintMsg()
 
 
   def ServoStopHere(self, pos):
-    cmd = bytearray.fromhex('%02x %02x %02x %08x' % (self.addr, 0x57, 0x11, pos))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoStopHere response ', self.resp)
+    cmd = bytes([self.addr, 0x57, 0x11])
+    cmd = cmd + bytes.fromhex('%08x' % (pos))
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoStopHere response: %s  Pos: %d\n' % (self.response, pos))
     if self.checksum_error:
-      sys.stderr.write('Error in stop here\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoStopHere: Error in stop here\n')
+    self.PrintMsg()
 
 
-  def ServoLoadTraj(self, mode, pos, vel, acc, pwm):
+  def ServoLoadTraj(self, mode, pos=None, vel=None, acc=None, pwm=None):
     n = 1 + ((mode & LOAD_POS) > 0)*4 + ((mode & LOAD_VEL) > 0)*4 + ((mode & LOAD_ACC) > 0)*4 + ((mode & LOAD_PWM) > 0)*1 
-    cmd_p1 = bytearray.fromhex('%02x %02x %02x' % (self.addr, 16*n+ 0x04, mode))
-    cmd_p2 = b''
+    cmd_p1 = bytes([self.addr, n, 0x04, mode])
+    cmd_p2 = bytes(0)
     if (mode & LOAD_POS):
-      cmd_p2 = cmd_p2 + bytearray.fromhex('%08x' % (pos))
+      cmd_p2 = cmd_p2 + bytes.fromhex('%08x' % (pos))
     if (mode & LOAD_VEL):
-      cmd_p2 = cmd_p2 + bytearray.fromhex('%08x' % (vel))
+      cmd_p2 = cmd_p2 + bytes.fromhex('%08x' % (vel))
     if (mode & LOAD_ACC):
-      cmd_p2 = cmd_p2 + bytearray.fromhex('%08x' % (acc))
+      cmd_p2 = cmd_p2 + bytes.fromhex('%08x' % (acc))
     if (mode & LOAD_PWM):
-      cmd_p2 = cmd_p2 + bytearray.fromhex('%02x' % (pwm))
+      cmd_p2 = cmd_p2 + bytes([pwm])
     cmd = cmd_p1 + cmd_p2
 #    print('Sending Trajectory Command: %s' % (cmd))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoLoadTraj response ', self.resp)
+    self.SendCmd(cmd, 0 + self.len_status)
+    if self.verbosity == 2:
+      self.cmd_msg = ('ServoLoadTraj response: %s\n' $ (self.response))
+      self.cmd_msg += ('    mode: 0x%02x\n' % (mode))
+      self.cmd_msg += ('     pos: %a\n'     % (pos))
+      self.cmd_msg += ('     vel: %a\n'     % (vel))
+      self.cmd_msg += ('     acc: %a\n'     % (acc))
+      self.cmd_msg += ('     pwm: %a\n'     % (pwm))
     if self.checksum_error:
-      sys.stderr.write('Error in load trajectory\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoLoadTraj: Error in load trajectory\n')
+    self.PrintMsg()
 
 
   def ServoIOControl(self, limit_mode = False, output_mode = PH3_MODE, fast_path = False, step_dir_mode = False):
     if step_dir_mode:
       limit_mode = False
     control_byte = 0x00 | limit_mode | output_mode | step_dir_mode
-    cmd = bytearray.fromhex('%02x %02x %02x' % (self.addr, 0x18, control_byte))
-    self.resp, self.checksum_error = self.nmc_net.send_cmd(cmd, 0 + self.len_status)
-    print('ServoIOControl response ', self.resp)
+    cmd = bytes([self.addr, 0x18, control_byte])
+    self.SendCmd(cmd, 0 + self.len_status)
+    if self.verbosity == 2:
+      self.cmd_msg = ('ServoIOControl response: %s\n' % (self.response))
+      self.cmd_msg += ('       limit_mode: %a\n' % (limit_mode))
+      self.cmd_msg += ('      output_mode: %a\n' % (output_mode))
+      self.cmd_msg += ('        fast_path: %a\n' % (fast_path))
+      self.cmd_msg += ('    step_dir_mode: %a\n' % (step_dir_mode))
     if self.checksum_error:
-      sys.stderr.write('Error setting servo I/O control\n')
-    return (self.resp, self.checksum_error)
+      self.err_msg = ('ServoIOControl: Error setting servo I/O control\n')
+    self.PrintMsg()
+
+
+  def PrintFullStatusReport(self):
+    print('')
+    print('Full Status of NMC module %s at addr %d: ' % (self.name,self.addr))
+    mod.ReadFullStatus()
+    if self.status_dict:
+      print('             pos:  %d' % (self.status_dict['pos']))
+      print('       cur_sense:  %d' % (self.status_dict['cur_sense']))
+      print('             vel:  %d' % (self.status_dict['vel']))
+      print('      aux_status:  %d' % (self.status_dict['aux_status']))
+      print('        home_pos:  %d' % (self.status_dict['home_pos']))
+      print('     device_type:  %s' % (self.status_dict['device_type']))
+      print('  device_version:  %d' % (self.status_dict['device_version']))
+      print('       pos_error:  %d' % (self.status_dict['pos_error']))
+      print('        path_pts:  %d' % (self.status_dict['path_pts']))
+    print('')
+
+
+  def SendCmd(self, cmd, len_response):
+    full_cmd = bytes([0xAA]) + cmd + bytes([checksum_8(cmd)])
+    self.nmc_net.port.write(full_cmd)
+    self.response = self.nmc_net.port.read(len_response)
+    self.CheckResponse()
+    if self.checksum_error == 2:
+      mod_addr = int.from_bytes(cmd[1:2], 'big', signed = False)
+      sys.stderr.write('>>>>>> Host-to-NMC checksum error reported by module %s at addr 0x%02x\n' % (self.name, mod_addr))
+
+
+  # Check validity of command-response communication
+  def CheckResponse(self):
+    # check if response contains data
+    if len(self.response):
+      # if we have a response then check if received response is valid
+      if checksum_8(self.response[:-1]) != self.response[-1]:
+        self.checksum_error = 1
+        return
+      # if response OK then check if previously sent command was received correctly
+      self.checksum_error = (self.response[0] & CKSUM_ERR)
+      return
+    else:
+      self.checksum_error = 1
+      return
 
 
 
@@ -273,44 +369,44 @@ class NmcNet():
     self.num_modules = 0
     self.modules = {}
 
-  def Initialize(self, module_names = None, port = '/dev/ttyUSB0', baudrate=19200, timeout = 0.02, max_tries = 5):
+
+  def Initialize(self, module_names = None, port = '/dev/ttyUSB0', baudrate = 19200, timeout = 0.02, max_tries = 5):
 
     # Starting from an unknown state, reset NMC network back to power-up state 
-    # Scan baud rates and send simple reset command
-    print('Resetting NMC Network to Power-up State...')
+    # This is accomplished by scanning baud rates and sending the SimpleReset command
+    print('NmcNet: Resetting NMC Network to Power-up State...')
     for baud in nmc_baud_rates:
       self.port = serial.Serial(port, baudrate=baud, bytesize=serial.EIGHTBITS,parity=serial.PARITY_NONE,stopbits=serial.STOPBITS_ONE, timeout = timeout)
       self.port.write(bytes(20))
       time.sleep(0.002)
       self.port.flushInput()
       self.SimpleReset()
-      time.sleep(0.002)
+#      time.sleep(0.002)
       self.port.close()
-    print('NMC Network Now Reset to Power-up State')
+    print('NmcNet: NMC Network Now Reset to Power-up State')
 
-    # Now initialize the NMC newtork starting from the power-up state
+    # Now initialize the NMC newtork starting from the power-up state at 19200 baud
     print('')
-    print('Initializing NMC Network...')
+    print('NmcNet: Initializing NMC Network...')
     self.port = serial.Serial(port, baudrate=19200, bytesize=serial.EIGHTBITS,parity=serial.PARITY_NONE,stopbits=serial.STOPBITS_ONE, timeout = timeout)
 
     num_modules_expected = len(module_names)
     self.num_modules = 0
     num_tries = 0
     while (self.num_modules != num_modules_expected) & (num_tries < max_tries):
-      # Clear nmc bus
+      # Clear NMC bus
       self.port.write(bytes(20))
       time.sleep(0.002)
       self.port.flushInput()
-
       self.SimpleReset()
 
       addr = 1
       for module_name in module_names:
-        print('Setting up module:  %s' % (module_name))
-        mod = NmcModule(self,addr,module_name)
+        print('NmcNet: Setting up module:  %s' % (module_name))
+        mod = NmcModule(module_name, self, addr)
         if mod.addr:
-          addr += 1
           self.modules[mod.name] = mod
+          addr += 1
         else:
           del mod
           break
@@ -325,119 +421,77 @@ class NmcNet():
 
     if self.num_modules == num_modules_expected:
       print('')
-      print('Successfully Initialized NMC Network in %d Tries' % (num_tries))
+      print('NmcNet: Successfully Initialized NMC Network in %d Tries' % (num_tries))
     else:
       print('')
-      print('Failed to Initialize NMC Network in %d Tries' % (num_tries))
+      print('NmcNet: Failed to Initialize NMC Network in %d Tries' % (num_tries))
 
     print('')
-    print('Found %d NMC Modules of %d Expected' % (self.num_modules, num_modules_expected))
+    print('NmcNet: Found %d NMC Modules of %d Expected' % (self.num_modules, num_modules_expected))
 
     print('')
-    print('Communicating with NMC Network at Baudrate: %d' % (self.port.getBaudrate()))
+    print('NmcNet: Communicating with NMC Network at Baudrate: %d' % (self.port.getBaudrate()))
 
     for module_name in sorted(self.modules.keys()):
       mod = self.modules[module_name]
       print('')
-      print('Sending NoOp to Check Status of NMC module %d: ' % (mod.addr))
-      resp, checksum_error = mod.NoOp()
-      print('NoOp response ', resp)
+      print('NmcNet: Sending NoOp to Check Status of NMC module %d: ' % (mod.addr))
+      mod.NoOp()
+      print('NmcNet: NoOp response: %s' % (mod.response))
+      mod.PrintFullStatusReport()
+
+    print('')
+
+
+    if baudrate != 19200:
+
+      self.SetBaud(baudrate)
+
       print('')
-      print('Full Status of NMC module %s at addr %d: ' % (mod.name,mod.addr))
-      status_dict = mod.ReadFullStatus()
-      if status_dict:
-        print('  pos:             %d' % (status_dict['pos']))
-        print('  cur_sense:       %d' % (status_dict['cur_sense']))
-        print('  vel:             %d' % (status_dict['vel']))
-        print('  aux_status:      %d' % (status_dict['aux_status']))
-        print('  home_pos:        %d' % (status_dict['home_pos']))
-        print('  device_type:     %s' % (status_dict['device_type']))
-        print('  device_version:  %d' % (status_dict['device_version']))
-        print('  pos_error:       %d' % (status_dict['pos_error']))
-        print('  path_pts:        %d' % (status_dict['path_pts']))
+      print('NmcNet: Communicating with NMC Network at Baudrate: %d' % (self.port.getBaudrate()))
 
-    print('')
+      for module_name in sorted(self.modules.keys()):
+        mod = self.modules[module_name]
+        mod.PrintFullStatusReport()
 
-    self.SetBaud(baudrate)
-
-    print('')
-    print('Communicating with NMC Network at Baudrate: %d' % (self.port.getBaudrate()))
-
-    for module_name in sorted(self.modules.keys()):
-      mod = self.modules[module_name]
       print('')
-      print('Full Status of NMC module %s at addr %d: ' % (mod.name,mod.addr))
-      status_dict = mod.ReadFullStatus()
-      if status_dict:
-        print('  pos:             %d' % (status_dict['pos']))
-        print('  cur_sense:       %d' % (status_dict['cur_sense']))
-        print('  vel:             %d' % (status_dict['vel']))
-        print('  aux_status:      %d' % (status_dict['aux_status']))
-        print('  home_pos:        %d' % (status_dict['home_pos']))
-        print('  device_type:     %s' % (status_dict['device_type']))
-        print('  device_version:  %d' % (status_dict['device_version']))
-        print('  pos_error:       %d' % (status_dict['pos_error']))
-        print('  path_pts:        %d' % (status_dict['path_pts']))
-
-
-    print('')
 
 
   def SimpleReset(self):
-    cmd = bytearray.fromhex('%02x %02x' % (0xFF, 0x0F))
-    self.send_cmd(cmd, 2)
-    print('SimpleReset')
+    cmd = bytes([0xFF, 0x0F])
+    full_cmd = bytes([0xAA]) + cmd + bytes([checksum_8(cmd)])
+    self.port.write(full_cmd)
+    time.sleep(0.002)
+#    self.SendCmd(cmd, 2)
+    print('NmcNet: SimpleReset')
 
 
   def Shutdown(self):
-    print('Shutting Down NMC Network')
+    print('NmcNet: Shutting Down NMC Network...')
     self.SimpleReset()
-    time.sleep(0.002)
+#    time.sleep(0.002)
     self.port.close()
 
 
   def SetBaud(self, baudrate):
-    print('Switching to Baudrate: %d' % (baudrate))
-    cmd = bytearray.fromhex('%02x %02x %02x' % (0xFF, 0x1A, nmc_baud_code[baudrate]))
-    full_cmd = bytes([0xAA]) + cmd + bytes([self.checksum_8(cmd)])
+    print('NmcNet SetBaud: Switching to Baudrate: %d' % (baudrate))
+    # Simultaneously set baudrate of all modules on network
+    cmd = bytes([0xFF, 0x1A, nmc_baud_code[baudrate]])
+    full_cmd = bytes([0xAA]) + cmd + bytes([checksum_8(cmd)])
     self.port.write(full_cmd)
+
+    # Give modules time to comply with command
     time.sleep(0.1)
+
+    # Set serial port to new baudrate
     self.port.setBaudrate(baudrate)
+
+    # Send NoOp to check status of each NMC module
     for module_name in sorted(self.modules.keys()):
       mod = self.modules[module_name]
       print('')
-      print('Sending NoOp to Check Status of NMC module %s at addr %d: ' % (mod.name, mod.addr))
-      resp, checksum_error = mod.NoOp()
-      print('NoOp response ', resp)
-
-
-
-  def send_cmd(self, cmd, len_response):
-    full_cmd = bytes([0xAA]) + cmd + bytes([self.checksum_8(cmd)])
-    self.port.write(full_cmd)
-    resp = self.port.read(len_response)
-
-    checksum_error = self.checksum_check(resp)
-    if checksum_error == 2:
-      module = int.from_bytes(cmd[1:2], 'big', signed = False)
-      sys.stderr.write('Host-to-NMC checksum error reported by module 0x%02x\n' % (module))
-    return (resp, checksum_error)
-
-
-  # Check validity of command-response communication
-  def checksum_check(self, response):
-    # check if response contains data
-    if len(response):
-      # if so then check if received response is valid
-      if self.checksum_8(response[:-1]) != response[-1]:
-        return 1
-      # if so then check if previously sent command was received correctly
-      return (response[0] & CKSUM_ERR)
-    else:
-      return 1
-
-
-  def checksum_8(self, bytes_arg):
-    return sum(bytes_arg)%256
+      print('NmcNet SetBaud: Sending NoOp to Check Status of NMC module %s at addr %d: ' % (mod.name, mod.addr))
+      mod.NoOp()
+      print('NmcNet SetBaud: NoOp response: %s' % (mod.response))
 
 
