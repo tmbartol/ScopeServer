@@ -66,9 +66,11 @@ cstr[0] = 0xAA;			//Header
 cstr[1] = groupaddr;
 cstr[2] = 0x10 | SET_BAUD;
 switch (baudrate) {
+	case 9600:		cstr[3] = PB9600; break;
 	case 19200:		cstr[3] = PB19200; break;
 	case 57600:		cstr[3] = PB57600; break;
-	case 115200:	cstr[3] = PB115200; break;
+	case 115200:		cstr[3] = PB115200; break;
+	case 230400:		cstr[3] = PB230400; break;
     default:	printf("Baud rate not supported - using default of 19200\n");
     			cstr[3] = PB19200;
                 baudrate = 19200;

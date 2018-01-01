@@ -86,6 +86,8 @@ class NmcModule():
     self.status_dict = None
     self.response = None
     self.checksum_error = None
+    self.send_errors = 0
+    self.receive_errors = 0
     self.cmd_msg = ''
     self.err_msg = ''
     self.verbosity = 2 # 0: quiet,  1: errors only,  2: error and cmd messages
@@ -276,7 +278,7 @@ class NmcModule():
 
   def ServoLoadTraj(self, mode, pos=None, vel=None, acc=None, pwm=None):
     n = 1 + ((mode & LOAD_POS) > 0)*4 + ((mode & LOAD_VEL) > 0)*4 + ((mode & LOAD_ACC) > 0)*4 + ((mode & LOAD_PWM) > 0)*1 
-    cmd_p1 = bytes([self.addr, n, 0x04, mode])
+    cmd_p1 = bytes([self.addr, 16*n + 0x04, mode])
     cmd_p2 = bytes(0)
     if (mode & LOAD_POS):
       cmd_p2 = cmd_p2 + bytes.fromhex('%08x' % (pos))
@@ -290,7 +292,7 @@ class NmcModule():
 #    print('Sending Trajectory Command: %s' % (cmd))
     self.SendCmd(cmd, 0 + self.len_status)
     if self.verbosity == 2:
-      self.cmd_msg = ('ServoLoadTraj response: %s\n' $ (self.response))
+      self.cmd_msg = ('ServoLoadTraj response: %s\n' % (self.response))
       self.cmd_msg += ('    mode: 0x%02x\n' % (mode))
       self.cmd_msg += ('     pos: %a\n'     % (pos))
       self.cmd_msg += ('     vel: %a\n'     % (vel))
@@ -321,7 +323,7 @@ class NmcModule():
   def PrintFullStatusReport(self):
     print('')
     print('Full Status of NMC module %s at addr %d: ' % (self.name,self.addr))
-    mod.ReadFullStatus()
+    self.ReadFullStatus()
     if self.status_dict:
       print('             pos:  %d' % (self.status_dict['pos']))
       print('       cur_sense:  %d' % (self.status_dict['cur_sense']))
@@ -337,11 +339,18 @@ class NmcModule():
 
   def SendCmd(self, cmd, len_response):
     full_cmd = bytes([0xAA]) + cmd + bytes([checksum_8(cmd)])
+    if self.verbosity == 2:
+      sys.stdout.write('SendCmd Sending Command: %a\n' % (full_cmd))
     self.nmc_net.port.write(full_cmd)
     self.response = self.nmc_net.port.read(len_response)
     self.CheckResponse()
+    if self.checksum_error == 1:
+      self.receive_errors += 1
+      self.nmc_net.receive_errors += 1
     if self.checksum_error == 2:
       mod_addr = int.from_bytes(cmd[1:2], 'big', signed = False)
+      self.send_errors += 1
+      self.nmc_net.send_errors += 1
       sys.stderr.write('>>>>>> Host-to-NMC checksum error reported by module %s at addr 0x%02x\n' % (self.name, mod_addr))
 
 
@@ -367,6 +376,8 @@ class NmcNet():
   def __init__(self):
     self.port = None
     self.num_modules = 0
+    self.send_errors = 0
+    self.receive_errors = 0
     self.modules = {}
 
 
@@ -456,11 +467,14 @@ class NmcNet():
 
       print('')
 
+    print('NmcNet Initialize: Send Errors: %d   Receive Errors: %d' % (self.send_errors, self.receive_errors))
+
 
   def SimpleReset(self):
     cmd = bytes([0xFF, 0x0F])
     full_cmd = bytes([0xAA]) + cmd + bytes([checksum_8(cmd)])
     self.port.write(full_cmd)
+    response = self.port.read(2)
     time.sleep(0.002)
 #    self.SendCmd(cmd, 2)
     print('NmcNet: SimpleReset')

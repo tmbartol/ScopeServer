@@ -30,9 +30,11 @@ typedef struct _NMCMOD {
 #define MAXSIOERROR 2
 
 //Define PIC baud rate divisors
-#define	PB19200		63
-#define	PB57600		20
-#define	PB115200	10
+#define	PB9600		127
+#define	PB19200		 64
+#define	PB57600		 21
+#define	PB115200	 10
+#define	PB230400	  5
 
 //Module type definitions:
 #define	SERVOMODTYPE	0

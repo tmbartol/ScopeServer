@@ -3,7 +3,7 @@
 #
 
 CXXFLAGS = -g -c -O2 -Wall -I../libnmc
-LIBS = -lstdc++ -lnmc
+LIBS = -lstdc++ -lrt -lnmc
 
 ####
 PROGS=picservo-test

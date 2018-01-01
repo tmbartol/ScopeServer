@@ -22,11 +22,17 @@
 //hardware setup).  It is simply an example to get you going.
 //---------------------------------------------------------------------------
 
+#include <stdio.h>
+#include <stdint.h>
+#include <time.h>
+
 //Include these header file when using libnmc:
 #include "sio_util.h"
 #include "nmccom.h"
 #include "picio.h"
 #include "picservo.h"
+
+#define BILLION 1000000000L
 
 //---------------------------------------------------------------------------
 //Globals:
@@ -151,9 +157,18 @@ printf("Current Position: %ld\n",position);
 // Do it all
 int main () 
 {
+  int i;
+  byte statbyte;
+  struct timespec t0, t1;
+  uint64_t delta_t_ns;
+  double delta_t;
+
   printf("Initializing...\n");
   Init();
   sleep(1);
+
+  printf("Changing baud to 19200\n");
+  NmcChangeBaud(0xFF,19200);
   
   printf("Setting the gain...\n");
   SetGain();
@@ -170,6 +185,19 @@ int main ()
   printf("Reading position...\n");
   ReadPos();
   sleep(1);
+
+  clock_gettime(CLOCK_MONOTONIC, &t0);
+  for (i=0; i<100; i++) {
+    NmcNoOp(1);	//poll controller to get current status data
+    statbyte = NmcGetStat(1);
+  }
+  clock_gettime(CLOCK_MONOTONIC, &t1);
+  delta_t_ns = BILLION * (t1.tv_sec - t0.tv_sec) + t1.tv_nsec - t0.tv_nsec;
+  delta_t = delta_t_ns/1e9;
+//  printf("delta_t nanoseconds = %llu\n", delta_t_ns);
+//  printf("delta_t = %.4g\n", delta_t);
+  printf("NoOps per second = %.4g\n", 100.0/delta_t);
+
 
   printf("Shutting down...\n");
   NMCClose();
