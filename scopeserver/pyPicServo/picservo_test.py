@@ -9,6 +9,8 @@ net.Initialize(['RA'],baudrate=230400)
 
 ra_mod = net.modules['RA']
 
+ra_mod.ServoIOControl()
+
 ra_mod.verbosity = 1
 
 ra_mod.ServoSetGain(100, 1000, 0, 0, 255, 0, 4000, 1, 0, 1)
@@ -37,12 +39,18 @@ pos = ra_mod.ServoGetPos()
 print('Current position = %d' % (pos))
 
 ra_mod.DefineStatusData(0x00)
+pos = 0
+ops = 0
 t1 = time.time()
 for i in range(100):
-  ra_mod.NoOp()
-  print(i, ra_mod.response)
+  ra_mod.ServoSetPos(pos)
+  ra_mod.PrintFullStatusReport()
+  pos += 1
+  ops += 2
+#  ra_mod.NoOp()
+#  print(i, ra_mod.response)
 t2 = time.time()
-print('NoOps per second:  %.4g' % (100.0/(t2-t1)))
+print('Ops per second:  %.4g' % (float(ops)/(t2-t1)))
 
 print('Send Errors: %d   Receive Errors: %d' % (net.send_errors, net.receive_errors))
 
