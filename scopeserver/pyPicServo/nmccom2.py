@@ -1,9 +1,8 @@
 import serial
-import termios
-import fcntl
-import array
+import pylibftdi
 import time
 import sys
+
 
 # Baud rates for NMC network
 nmc_baud_rates = [9600, 19200, 57600, 115200, 230400]
@@ -89,8 +88,6 @@ class NmcModule():
     self.status_dict = None
     self.response = None
     self.checksum_error = None
-    self.bytes_sent = 0
-    self.bytes_received = 0
     self.send_errors = 0
     self.receive_errors = 0
     self.cmd_msg = ''
@@ -170,17 +167,17 @@ class NmcModule():
     self.PrintMsg()
 
     self.status_dict = {}
-    self.status_dict['pos'] = int.from_bytes(self.response[1:5], 'little', signed = True)
-    self.status_dict['cur_sense'] = int.from_bytes(self.response[5:6], 'little', signed = False)
-    self.status_dict['vel'] = int.from_bytes(self.response[6:8], 'little', signed = True)
-    self.status_dict['aux_status'] = int.from_bytes(self.response[8:9], 'little', signed = False)
-    self.status_dict['home_pos'] = int.from_bytes(self.response[9:13], 'little', signed = True)
-    self.status_dict['device_type'] = nmc_device_dict[int.from_bytes(self.response[13:14], 'little', signed = False)]
+    self.status_dict['pos'] = int.from_bytes(self.response[1:5], 'big', signed = True)
+    self.status_dict['cur_sense'] = int.from_bytes(self.response[5:6], 'big', signed = False)
+    self.status_dict['vel'] = int.from_bytes(self.response[6:8], 'big', signed = True)
+    self.status_dict['aux_status'] = int.from_bytes(self.response[8:9], 'big', signed = False)
+    self.status_dict['home_pos'] = int.from_bytes(self.response[9:13], 'big', signed = True)
+    self.status_dict['device_type'] = nmc_device_dict[int.from_bytes(self.response[13:14], 'big', signed = False)]
     self.device_type = self.status_dict['device_type']
-    self.status_dict['device_version'] = int.from_bytes(self.response[14:15], 'little', signed = False)
+    self.status_dict['device_version'] = int.from_bytes(self.response[14:15], 'big', signed = False)
     self.device_version = self.status_dict['device_version']
-    self.status_dict['pos_error'] = int.from_bytes(self.response[15:17], 'little', signed = True)
-    self.status_dict['path_pts'] = int.from_bytes(self.response[17:18], 'little', signed = False)
+    self.status_dict['pos_error'] = int.from_bytes(self.response[15:17], 'big', signed = True)
+    self.status_dict['path_pts'] = int.from_bytes(self.response[17:18], 'big', signed = False)
 
 
   def NoOp(self):
@@ -194,7 +191,7 @@ class NmcModule():
 
   def ServoSetPos(self, pos):
     cmd = bytes([self.addr, 0x50, 0x02])
-    cmd = cmd + pos.to_bytes(4,'little',signed=True)
+    cmd = cmd + bytes.fromhex('%08x' % (pos))
     self.SendCmd(cmd, 0 + self.len_status)
     self.cmd_msg = ('ServoSetPos response: %s  Pos: %d\n' % (self.response, pos))
     if self.checksum_error:
@@ -218,24 +215,14 @@ class NmcModule():
       self.err_msg = ('ServoGetPos: Error getting position\n')
       pos = None
     else:
-      pos = int.from_bytes(self.response[1:5], 'little', signed = True)
+      pos = int.from_bytes(self.response[1:5], 'big', signed = True)
     self.cmd_msg = ('ServoGetPos response: %s  Pos: %a\n' % (self.response, pos))
     self.PrintMsg()
     return (pos)
 
 
   def ServoSetGain(self, Kp, Kd, Ki, IL, OL, CL, EL, SR, DB, SM):
-    cmd = bytes([self.addr, 0xF6])
-    cmd = cmd + Kp.to_bytes(2,'little',signed=False)
-    cmd = cmd + Kd.to_bytes(2,'little',signed=False)
-    cmd = cmd + Ki.to_bytes(2,'little',signed=False)
-    cmd = cmd + IL.to_bytes(2,'little',signed=False)
-    cmd = cmd + OL.to_bytes(1,'little',signed=False)
-    cmd = cmd + CL.to_bytes(1,'little',signed=False)
-    cmd = cmd + EL.to_bytes(2,'little',signed=False)
-    cmd = cmd + SR.to_bytes(1,'little',signed=False)
-    cmd = cmd + DB.to_bytes(1,'little',signed=False)
-    cmd = cmd + SM.to_bytes(1,'little',signed=False)
+    cmd = bytes.fromhex('%02x %02x %04x %04x %04x %04x %02x %02x %04x %02x %02x %02x' % (self.addr, 0xF6, Kp, Kd, Ki, IL, OL, CL, EL, SR, DB, SM))
     self.SendCmd(cmd, 0 + self.len_status)
     if self.verbosity == 2:
       self.cmd_msg = ('ServoSetGain response: %s\n' % (self.response))
@@ -283,7 +270,7 @@ class NmcModule():
 
   def ServoStopHere(self, pos):
     cmd = bytes([self.addr, 0x57, 0x11])
-    cmd = cmd + pos.to_bytes(4,'little',signed=True)
+    cmd = cmd + bytes.fromhex('%08x' % (pos))
     self.SendCmd(cmd, 0 + self.len_status)
     self.cmd_msg = ('ServoStopHere response: %s  Pos: %d\n' % (self.response, pos))
     if self.checksum_error:
@@ -296,13 +283,13 @@ class NmcModule():
     cmd_p1 = bytes([self.addr, 16*n + 0x04, mode])
     cmd_p2 = bytes(0)
     if (mode & LOAD_POS):
-      cmd_p2 = cmd_p2 + pos.to_bytes(4,'little',signed=True)
+      cmd_p2 = cmd_p2 + bytes.fromhex('%08x' % (pos))
     if (mode & LOAD_VEL):
-      cmd_p2 = cmd_p2 + vel.to_bytes(4,'little',signed=False)
+      cmd_p2 = cmd_p2 + bytes.fromhex('%08x' % (vel))
     if (mode & LOAD_ACC):
-      cmd_p2 = cmd_p2 + acc.to_bytes(4,'little',signed=False)
+      cmd_p2 = cmd_p2 + bytes.fromhex('%08x' % (acc))
     if (mode & LOAD_PWM):
-      cmd_p2 = cmd_p2 + pwm.to_bytes(1,'little',signed=False)
+      cmd_p2 = cmd_p2 + bytes([pwm])
     cmd = cmd_p1 + cmd_p2
 #    print('Sending Trajectory Command: %s' % (cmd))
     self.SendCmd(cmd, 0 + self.len_status)
@@ -356,15 +343,14 @@ class NmcModule():
     full_cmd = bytes([0xAA]) + cmd + bytes([checksum_8(cmd)])
     if self.verbosity == 2:
       sys.stdout.write('SendCmd Sending Command: %a\n' % (full_cmd))
-    self.bytes_sent += self.nmc_net.port.write(full_cmd)
+    self.nmc_net.port.write(full_cmd)
     self.response = self.nmc_net.port.read(len_response)
-    self.bytes_received += len(self.response)
     self.CheckResponse()
     if self.checksum_error == 1:
       self.receive_errors += 1
       self.nmc_net.receive_errors += 1
     if self.checksum_error == 2:
-      mod_addr = int.from_bytes(cmd[1:2], 'little', signed = False)
+      mod_addr = int.from_bytes(cmd[1:2], 'big', signed = False)
       self.send_errors += 1
       self.nmc_net.send_errors += 1
       sys.stderr.write('>>>>>> Host-to-NMC checksum error reported by module %s at addr 0x%02x\n' % (self.name, mod_addr))
@@ -399,21 +385,20 @@ class NmcNet():
 
   def Initialize(self, module_names = None, port = '/dev/ttyUSB0', baudrate = 19200, timeout = 0.02, max_tries = 5):
 
+
     # Starting from an unknown state, reset NMC network back to power-up state 
     # This is accomplished by scanning baud rates and sending the SimpleReset command
     print('NmcNet: Resetting NMC Network to Power-up State...')
-    self.port = serial.Serial(port, bytesize=serial.EIGHTBITS,parity=serial.PARITY_NONE,stopbits=serial.STOPBITS_ONE, timeout = timeout)
-    serial_attr = array.array('i', [0] * 32)
-    fcntl.ioctl(self.port.fileno(),termios.TIOCGSERIAL,serial_attr)
-    serial_attr[4] |= 0x2000   # set serial flag for ASYNC_LOW_LATENCY
-#    serial_attr[4] &= 0xffffdfff   # unset serial flag for ASYNC_LOW_LATENCY
-    fcntl.ioctl(self.port.fileno(),termios.TIOCSSERIAL,serial_attr)
-    time.sleep(0.1)
+    self.port = pylibftdi.Device()
+    self.port.ftdi_fn.ftdi_set_line_property(8, 1, 0)
+    self.port.ftdi_fn.ftdi_set_latency_timer(16)
     for baud in nmc_baud_rates:
+#      self.port = serial.Serial(port, baudrate=baud, bytesize=serial.EIGHTBITS,parity=serial.PARITY_NONE,stopbits=serial.STOPBITS_ONE, timeout = timeout)
       self.port.baudrate = baud
       self.port.write(bytes(20))
       time.sleep(0.002)
-      self.port.flushInput()
+#      self.port.flushInput()
+      self.port.flush_input()
       self.SimpleReset()
 #      self.port.close()
     print('NmcNet: NMC Network Now Reset to Power-up State')
@@ -431,7 +416,8 @@ class NmcNet():
       # Clear NMC bus
       self.port.write(bytes(20))
       time.sleep(0.002)
-      self.port.flushInput()
+#      self.port.flushInput()
+      self.port.flush_input()
       self.SimpleReset()
 
       addr = 1
@@ -507,10 +493,6 @@ class NmcNet():
     print('NmcNet: Shutting Down NMC Network...')
     self.SimpleReset()
     time.sleep(0.002)
-    serial_attr = array.array('i', [0] * 32)
-    fcntl.ioctl(self.port.fileno(),termios.TIOCGSERIAL,serial_attr)
-    serial_attr[4] &= 0xffffdfff   # unset serial flag for ASYNC_LOW_LATENCY
-    fcntl.ioctl(self.port.fileno(),termios.TIOCSSERIAL,serial_attr)
     self.port.close()
 
 

@@ -34,6 +34,25 @@ ra_mod.ServoIOControl()
 
 ra_mod.verbosity = 1
 
+
+t1 = time.time()
+signal.signal(signal.SIGINT, signal_handler)
+print('\n\n>>>>> Press Ctrl+C to Quit <<<<<\n\n')
+
+ra_mod.ServoResetPos()
+i = 0
+ops = 0
+while True:
+  pos = ra_mod.ServoGetPos()
+  i+=1
+  ops+=1
+  if i%100 == 0:
+    ra_mod.PrintFullStatusReport()
+    ops+=1
+#    print('pos: %d' % (pos))
+
+
+'''
 ra_mod.ServoSetGain(100, 1000, 0, 0, 255, 0, 4000, 1, 0, 1)
 
 # ServoOn
@@ -84,5 +103,7 @@ while True:
 #  print(i, ra_mod.response)
 #  ops += 1
   i+=1
+
+'''
 
 
