@@ -254,6 +254,15 @@ class NmcModule():
     self.PrintMsg()
 
 
+  def ServoStopMotorOff(self):
+    cmd = bytes([self.addr, 0x17, 0x02])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoStopMotorOff response: %s\n' % (self.response))
+    if self.checksum_error:
+      self.err_msg = ('ServoStopMotorOff: Error in stop motor\n')
+    self.PrintMsg()
+
+
   def ServoStopMotor(self):
     cmd = bytes([self.addr, 0x17, 0x03])
     self.SendCmd(cmd, 0 + self.len_status)
@@ -336,20 +345,21 @@ class NmcModule():
 
 
   def PrintFullStatusReport(self):
-    print('')
-    print('Full Status of NMC module %s at addr %d: ' % (self.name,self.addr))
+    sys.stdout.write('\n')
+    sys.stdout.write('Full Status of NMC module %s at addr %d: \n' % (self.name,self.addr))
     self.ReadFullStatus()
     if self.status_dict:
-      print('             pos:  %d' % (self.status_dict['pos']))
-      print('       cur_sense:  %d' % (self.status_dict['cur_sense']))
-      print('             vel:  %d' % (self.status_dict['vel']))
-      print('      aux_status:  %d' % (self.status_dict['aux_status']))
-      print('        home_pos:  %d' % (self.status_dict['home_pos']))
-      print('     device_type:  %s' % (self.status_dict['device_type']))
-      print('  device_version:  %d' % (self.status_dict['device_version']))
-      print('       pos_error:  %d' % (self.status_dict['pos_error']))
-      print('        path_pts:  %d' % (self.status_dict['path_pts']))
-    print('')
+      sys.stdout.write('             pos:  %d\n' % (self.status_dict['pos']))
+      sys.stdout.write('       cur_sense:  %d\n' % (self.status_dict['cur_sense']))
+      sys.stdout.write('             vel:  %d\n' % (self.status_dict['vel']))
+      sys.stdout.write('      aux_status:  %d\n' % (self.status_dict['aux_status']))
+      sys.stdout.write('        home_pos:  %d\n' % (self.status_dict['home_pos']))
+      sys.stdout.write('     device_type:  %s\n' % (self.status_dict['device_type']))
+      sys.stdout.write('  device_version:  %d\n' % (self.status_dict['device_version']))
+      sys.stdout.write('       pos_error:  %d\n' % (self.status_dict['pos_error']))
+      sys.stdout.write('        path_pts:  %d\n' % (self.status_dict['path_pts']))
+    sys.stdout.write('\n')
+    sys.stdout.flush()
 
 
   def SendCmd(self, cmd, len_response):
