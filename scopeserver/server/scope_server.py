@@ -11,6 +11,8 @@ import datetime
 import re
 import math
 import numpy as np
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from pyPicServo import nmccom
 
 
