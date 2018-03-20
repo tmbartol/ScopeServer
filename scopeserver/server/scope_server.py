@@ -11,7 +11,7 @@ import datetime
 import re
 import math
 import numpy as np
-import gpsd
+from ..pyPicServo import nmccom
 
 
 # Class to get raw characters from terminal input
@@ -64,7 +64,8 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class scope_server:
 
-  def __init__(self):
+  def __init__(self, scope_mode = 'SIM_SCOPE'):
+    self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
     self.input_running = False
     self.server_running = False
     self.ra_axis_running = False
@@ -72,19 +73,21 @@ class scope_server:
     self.ra_axis_guiding = False
     self.goto_target_running = False
     self.resume_mode = 'NONE'  # allowed functions:  NONE, GUIDE, GOTO
-    self.res_ra = 40000.0
-    self.res_dec = 40000.0
-    self.pos_ra = 10000.0
-    self.pos_dec = 0.0
+    self.res_ra = 576*40000.0
+    self.res_dec = 450*40000.0
+    self.pos_ra = 144*40000.0
+    self.pos_dec = 0*40000.0
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
-    self.delta = 1.0
+    self.delta = 576*1.0
     tropical_year = 365.242190402
 #    self.sidereal_day = 86400*tropical_year/(1.0+tropical_year)
     self.sidereal_day = 86400.0/1.002737909350795
     self.sidereal_rate = self.res_ra/self.sidereal_day
     self.guide_rate = self.sidereal_rate
-    self.slew_rate_max = self.res_ra/360.
+    self.delta = 1.0*self.guide_rate
+    sys.stderr.write('\n\nGuide rate set to: %.6g  counts per second\n\n' % (self.guide_rate))
+    self.slew_rate_max = 2*self.res_ra/360.
     self.slew_rate_find = self.slew_rate_max/10
     self.slew_rate_center = self.slew_rate_max/50
     self.slew_rate_guide = self.guide_rate
@@ -92,21 +95,26 @@ class scope_server:
 
     self.timezone = time.timezone
 
-    gpsd.connect()
+    try:
+      import gpsd
+      gpsd.connect()
+      lat, lon = gpsd.get_current().position()
+      self.site_latitude = lat
+      self.site_longitude = lon
+    except ImportError:
+      self.site_latitude = 33.0831
+      self.site_longitude = -117.2455
 
-    lat, lon = gpsd.get_current().position()
-    self.site_latitude = lat
-    self.site_longitude = lon
-
-#    self.site_latitude = 33.0831
-#    self.site_longitude = -117.2455
+    sys.stderr.write('\nStarting Scope Sever in %s mode\n' % (self.scope_mode))
+    sys.stderr.write('    Site location set to: Lat: %.9g   Lon: %.9g\n\n' % (self.site_latitude, self.site_longitude))
 
     self.target_ra_pos = 0.0
     self.target_ra_time = '00:00:00'
     self.target_ra_time_array = [0,0,0]
     self.target_dec_pos = 0.0
     self.target_dec_angle = "+00*00'00"
-    self.target_epsilon_pos = 1.0/2.0
+#    self.target_epsilon_pos = 1.0/2.0
+    self.target_epsilon_pos = 300.0
 
 
   def get_status(self):
@@ -370,7 +378,7 @@ class scope_server:
     # Exit the server thread when the main thread terminates
     self.server_thread.daemon = True
     self.server_thread.start()
-    sys.stderr.write('Waiting for a connection...\r\n')
+    sys.stderr.write('Waiting for a connection, type q to quit...\r\n')
     self.server_thread.join()
 
 
@@ -395,24 +403,36 @@ class scope_server:
         if k!='':
           break
       # Handle Arrow keys
+
+      # N
       if k=='\x1b[A':
         self.pos_dec = (self.pos_dec + self.delta)%self.res_dec
-        sys.stderr.write('  moved N to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
+        sys.stderr.write('  moved N to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
+      # S
       elif k=='\x1b[B':
         self.pos_dec = (self.pos_dec - self.delta)%self.res_dec
-        sys.stderr.write('  moved S to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
+        sys.stderr.write('  moved S to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
+      # E
       elif k=='\x1b[C':
         if self.ra_axis_running:
           self.ra_axis_start_pos = (self.ra_axis_start_pos - self.delta)%self.res_ra
+        elif self.ra_axis_guiding:
+          self.ra_axis_guide_start_pos = (self.ra_axis_guide_start_pos - self.delta)%self.res_ra
         else:
           self.pos_ra = (self.pos_ra - self.delta)%self.res_ra
-        sys.stderr.write('  moved E to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
+        sys.stderr.write('  moved E to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
+      # W
       elif k=='\x1b[D':
         if self.ra_axis_running:
           self.ra_axis_start_pos = (self.ra_axis_start_pos + self.delta)%self.res_ra
+        elif self.ra_axis_guiding:
+          self.ra_axis_guide_start_pos = (self.ra_axis_guide_start_pos + self.delta)%self.res_ra
         else:
           self.pos_ra = (self.pos_ra + self.delta)%self.res_ra
-        sys.stderr.write('  moved W to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
+        sys.stderr.write('  moved W to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # Start RA axis guiding
       elif k=='g':
@@ -423,6 +443,10 @@ class scope_server:
       elif k=='s':
         self.ra_axis_guide_stop(resume_mode='NONE')
         sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
+      # Report Position
+      elif k=='p':
+        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # Shutdown the server
       elif k=='q':
@@ -597,7 +621,7 @@ if (__name__ == '__main__'):
 
   if (len(sys.argv)<3):
     print('\nUsage: %s server_address port\n' % (sys.argv[0]))
-    print('   Example: %s 10.0.1.21 4030\n' % (sys.argv[0]))
+    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
     sys.exit()
 
   server_address = sys.argv[1]
