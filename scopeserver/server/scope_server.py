@@ -11,7 +11,10 @@ import datetime
 import re
 import math
 import numpy as np
-from ..pyPicServo import nmccom
+import os
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from pyPicServo import nmccom
 
 
 # Class to get raw characters from terminal input
