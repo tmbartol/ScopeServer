@@ -11,7 +11,7 @@ import datetime
 import re
 import math
 import numpy as np
-from ..pyPicServo import nmccom
+from pyPicServo import nmccom
 
 
 # Class to get raw characters from terminal input
@@ -115,6 +115,52 @@ class scope_server:
     self.target_dec_angle = "+00*00'00"
 #    self.target_epsilon_pos = 1.0/2.0
     self.target_epsilon_pos = 300.0
+ 
+    if self.scope_mode == 'REAL_SCOPE':
+      nmc_net = nmccom.NmcNet()
+      nmc_net.Initialize(['RA','Dec'],baudrate=230400)
+      self.ra_mod = nmc_net.modules['RA']
+      self.dec_mod = nmc_net.modules['Dec']
+      self.ra_mod.verbosity = 1
+      self.dec_mod.verbosity = 1
+      self.servo_sidereal_rate = int(self.sidereal_rate*0.000512*2**16)
+      self.servo_ra_fast_rate = int(2*64000*0.000512*2**16)
+      self.servo_dec_fast_rate = int(2*50000*0.000512*2**16)
+ 
+      self.ra_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
+      self.dec_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
+      self.ra_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
+      self.dec_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
+      self.ra_mod.ServoSetPos(self.pos_ra)
+      self.dec_mod.ServoSetPos(self.pos_dec)
+
+      # Servo On
+      #self.ra_mod.ServoStopMotor()
+      #self.dec_mod.ServoStopMotor()
+
+      # Servo Off
+      #self.ra_mod.ServoStopMotorOff()
+      #self.dec_mod.ServoStopMotorOff()
+
+      # Slew RA at fast rate
+      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*64000, self.servo_fast_rate, 400, 0)
+      self.ra_mod.NoOp()
+      while not self.ra_mod.response[0] & 0x01:
+        if i%200 == 0:
+          self.ra_mod.PrintFullStatusReport()
+        self.ra_mod.NoOp()
+        i+=1
+
+
+      # Slew RA at sidereal rate
+      pos = self.ra_mod.ServoGetPos()
+      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 180*64000, servo_sidereal_rate, 100, 0)
+      self.ra_mod.NoOp()
+      while not self.ra_mod.response[0] & 0x01:
+        if i%200 == 0:
+          self.ra_mod.PrintFullStatusReport()
+        self.ra_mod.NoOp()
+        i+=1
 
 
   def get_status(self):
