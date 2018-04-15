@@ -11,6 +11,7 @@ def signal_handler(signal, frame):
   print('\n\nYou pressed Ctrl+C!\n')
   t2 = time.time()
   ra_mod.ServoStopMotorOff()
+  dec_mod.ServoStopMotorOff()
 #  pos = ra_mod.ServoGetPos()
 #  cps = pos/(t2-t1)
 #  print('Counts per second = %.6g' % (cps))
@@ -36,6 +37,7 @@ ra_mod = net.modules['RA']
 dec_mod = net.modules['Dec']
 
 ra_mod.verbosity = 1
+dec_mod.verbosity = 1
 
 
 dec_counts = 40000*450
@@ -64,12 +66,12 @@ dec_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
 ra_mod.ServoStopMotor()
 #ra_mod.ServoStopAbrupt()
 
-# RA ServoOn
-#dec_mod.ServoStopMotor()
+# Dec ServoOn
+dec_mod.ServoStopMotor()
 
 # Go
 ra_mod.ServoResetPos()
-#dec_mod.ServoResetPos()
+dec_mod.ServoResetPos()
 
 # Step 1: Run in PWM mode to setup commutation:
 #ra_mod.ServoLoadTraj(nmccom.LOAD_PWM | nmccom.START_NOW, pwm=64)
@@ -94,20 +96,24 @@ ra_mod.ServoResetPos()
 ops = 0
 
 # Slew Dec at forward fast rate
-#dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*360*50000, dec_servo_fast_rate, 400, 0)
+#dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 30*40000, ra_servo_fast_rate, 400, 0)
+dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 1*360*50000, dec_servo_fast_rate, 400, 0)
 
 # Slew RA at forward fast rate
-ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 30*40000, ra_servo_fast_rate, 400, 0)
-#ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*360*64000, ra_servo_fast_rate, 400, 0)
+#ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 30*40000, ra_servo_fast_rate, 400, 0)
+ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 1*360*64000, ra_servo_fast_rate, 400, 0)
 
 t1 = time.time()
 i = 0
 ra_mod.NoOp()
-while not ra_mod.response[0] & 0x01:
+dec_mod.NoOp()
+while ((not (ra_mod.response[0] & 0x01)) or (not (dec_mod.response[0] & 0x01))):
   if i%200 == 0:
     ra_mod.PrintFullStatusReport()
+    dec_mod.PrintFullStatusReport()
     ops+=1
   ra_mod.NoOp()
+  dec_mod.NoOp()
   ops+=1
   i+=1
 
@@ -142,20 +148,26 @@ print('\npos = %d' % (pos))
 print('Counts per second = %.6g\n' % (cps))
 '''
 
-
 # Slew RA at sidereal rate
-#ra_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
 pos = ra_mod.ServoGetPos()
 ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 100*40000, servo_sidereal_rate, 100, 0)
+
+
+# Slew Dec at sidereal rate
+pos = dec_mod.ServoGetPos()
+dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 100*40000, servo_sidereal_rate, 100, 0)
 
 t1 = time.time()
 i = 0
 ra_mod.NoOp()
-while not ra_mod.response[0] & 0x01:
+dec_mod.NoOp()
+while ((not (ra_mod.response[0] & 0x01)) or (not (dec_mod.response[0] & 0x01))):
   if i%200 == 0:
     ra_mod.PrintFullStatusReport()
+    dec_mod.PrintFullStatusReport()
     ops+=1
   ra_mod.NoOp()
+  dec_mod.NoOp()
   ops+=1
   i+=1
 
@@ -169,6 +181,7 @@ print('Counts per second = %.6g\n' % (cps))
 
 
 ra_mod.ServoStopMotorOff()
+dec_mod.ServoStopMotorOff()
 
 sys.exit(0)
 
