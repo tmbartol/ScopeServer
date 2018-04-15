@@ -12,6 +12,7 @@ import re
 import math
 import numpy as np
 import os
+import queue
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyPicServo import nmccom
@@ -71,15 +72,23 @@ class scope_server:
     self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
     self.input_running = False
     self.server_running = False
+    self.motion_q = queue.Queue(maxsize=0)
+    self.motion_running = False
     self.ra_axis_running = False
     self.dec_axis_running = False
     self.ra_axis_guiding = False
     self.goto_target_running = False
     self.resume_mode = 'NONE'  # allowed functions:  NONE, GUIDE, GOTO
-    self.res_ra = 576*40000.0
-    self.res_dec = 450*40000.0
-    self.pos_ra = 144*40000.0
-    self.pos_dec = 0*40000.0
+    self.encoder_res_ra = 40000
+    self.encoder_res_dec = 40000
+    self.worm_gear_ra = 576
+    self.worm_gear_dec = 450
+    self.res_ra = self.worm_gear_ra*self.encoder_res_ra
+    self.res_dec = self.worm_gear_dec*self.encoder_res_dec
+    self.degree_counts_ra=int(self.res_ra/360)
+    self.degree_counts_dec=int(self.res_dec/360)
+    self.pos_ra = 90*self.degrees_count_ra  # home RA angle is 90 degrees
+    self.pos_dec = 0*self.degrees_count_dec  # home Dec angle is 0 degrees
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
     tropical_year = 365.242190402
@@ -126,16 +135,18 @@ class scope_server:
       self.ra_mod.verbosity = 1
       self.dec_mod.verbosity = 1
       self.servo_sidereal_rate = int(self.sidereal_rate*0.000512*2**16)
-      self.servo_ra_fast_rate = int(2*64000*0.000512*2**16)
-      self.servo_dec_fast_rate = int(2*50000*0.000512*2**16)
+      self.servo_ra_slew_rate = int(self.slew_rate*0.000512*2**16)
+      self.servo_dec_slew_rate = int(self.slew_rate*0.000512*2**16)
  
       self.ra_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
       self.dec_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
       self.ra_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
       self.dec_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
-      self.ra_mod.ServoSetPos(self.pos_ra)
-      self.dec_mod.ServoSetPos(self.pos_dec)
+      self.ra_mod.ServoSetPos(int(self.pos_ra))
+      self.dec_mod.ServoSetPos(int(self.pos_dec))
 
+      # Example nmccom commands
+      '''
       # Servo On
       #self.ra_mod.ServoStopMotor()
       #self.dec_mod.ServoStopMotor()
@@ -145,7 +156,7 @@ class scope_server:
       #self.dec_mod.ServoStopMotorOff()
 
       # Slew RA at fast rate
-      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*64000, self.servo_fast_rate, 400, 0)
+      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*self.degrees_count_ra, self.servo_fast_rate, 400, 0)
       self.ra_mod.NoOp()
       while not self.ra_mod.response[0] & 0x01:
         if i%200 == 0:
@@ -155,14 +166,17 @@ class scope_server:
 
 
       # Slew RA at sidereal rate
+      # Servo On
+      #self.ra_mod.ServoStopMotor()
       pos = self.ra_mod.ServoGetPos()
-      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 180*64000, servo_sidereal_rate, 100, 0)
+      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 360*self.degrees_count_ra, servo_sidereal_rate, 100, 0)
       self.ra_mod.NoOp()
       while not self.ra_mod.response[0] & 0x01:
         if i%200 == 0:
           self.ra_mod.PrintFullStatusReport()
         self.ra_mod.NoOp()
         i+=1
+      '''
 
 
   def get_status(self):
@@ -247,7 +261,7 @@ class scope_server:
     tt = list(time.localtime(time.time()))
     tt[3:6] = ra_time_array[:]
     ra_time = time.mktime(tuple(tt))
-    dst = 0*3600.0
+    dst = 0*3600.0  # Correct for Daylight Savings Time
     pos = ((ra_time - time.time() - dst)*self.res_ra/86400.0)%self.res_ra
 #    sys.stderr.write('target ra_time: %02d:%02d:%02d  pos %.9g\r\n' % (ra_time_array[0], ra_time_array[1], ra_time_array[2], pos))
     return (pos)
@@ -269,32 +283,155 @@ class scope_server:
     self.thread_get_input.start()
 
 
-  # Start thread to run RA axis at guiding rate
-  def ra_axis_guide_start(self, rate):
-    self.guide_rate = rate
-    self.ra_axis_guiding = True
-    self.thread_ra_axis_guide = threading.Thread(target=self.ra_axis_guide)
-    self.thread_ra_axis_guide.setDaemon(1)
-    self.thread_ra_axis_guide.start()
+##################
+
+  # Start thread for motion control
+  def motion_control_start(self):
+    self.thread_motion_control = threading.Thread(target - self.motion_control)
+    self.thread_motion_control.setDaemon(1)
+    self.thread_motion_control.start()
 
 
-  # Stop RA axis guiding
-  def ra_axis_guide_stop(self,resume_mode='NONE'):
-    if self.ra_axis_guiding:
-      self.ra_axis_guiding=False
-      self.resume_mode=resume_mode
-      self.thread_ra_axis_guide.join()
+  def motion_control(self):
+    sys.stderr.write('motion_control: thread starting...')
+    while True:
+      if self.motion_running:
+        # if in motion get motion command but do not wait if queue is empty
+        try:
+          motion_cmd = self.motion_q.get_nowait()
+        except queue.Empty:
+          motion_cmd = ['motion_continue', None]
+      else:
+        # if not in motion wait to receive motion command
+        sys.stderr.write('motion_control: idle, waiting for command')
+        motion_cmd = self.motion_q.get()
 
+      cmd = motion_cmd[0]
+      cmd_arg = motion_cmd[1]
+      if cmd == 'ra_slew_start':
+        sys.stderr.write('motion_control: RA slew start')
+        # RA Slew at slew rate
+        self.ra_axis_running = True
+        # RA Servo On
+        self.ra_mod.ServoStopMotor()
+        self.pos_ra = self.ra_mod.ServoGetPos()
+        self.ra_axis_start_pos = self.pos_ra
+        self.ra_axis_start_time = time.time()
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degrees_count_ra, self.servo_ra_slew_rate, 400, 0)
 
-  # Run RA axis at guiding rate
-  def ra_axis_guide(self):
-    self.ra_axis_guide_start_time = time.time()
-    self.ra_axis_guide_start_pos = self.pos_ra
-    while self.ra_axis_guiding:
-      elapsed_t = time.time() - self.ra_axis_guide_start_time
-      self.pos_ra = (self.ra_axis_guide_start_pos - elapsed_t*self.guide_rate)%self.res_ra
-      time.sleep(0.01)
+      elif cmd == 'ra_slew_stop':
+        sys.stderr.write('motion_control: RA slew stop')
+        # RA Smooth Stop
+        self.ra_mod.ServoStopSmooth()
 
+      elif cmd == 'ra_guide_start':
+        sys.stderr.write('motion_control: RA guide start')
+        # Slew RA at sidereal rate
+        self.ra_axis_guiding = True
+        # Servo On
+        self.ra_mod.ServoStopMotor()
+        self.pos_ra = self.ra_mod.ServoGetPos()
+        self.ra_axis_guide_start_pos = self.pos_ra
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, -180*self.degrees_count_ra, self.servo_sidereal_rate, 100, 0)
+
+      elif cmd == 'ra_guide_stop':
+        sys.stderr.write('motion_control: RA guide stop')
+        # RA Smooth Stop
+        self.ra_mod.ServoStopSmooth()
+
+      elif cmd == 'dec_slew_start':
+        sys.stderr.write('motion_control: Dec slew start')
+        # Dec Slew at slew rate
+        self.dec_axis_running = True
+        # Dec Servo On
+        self.dec_mod.ServoStopMotor()
+        self.pos_dec = self.dec_mod.ServoGetPos()
+        self.dec_axis_start_pos = self.pos_dec
+        self.dec_axis_start_time = time.time()
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degrees_count_dec, self.servo_dec_slew_rate, 400, 0)
+
+      elif cmd == 'dec_slew_stop':
+        sys.stderr.write('motion_control: Dec slew stop')
+        # Dec Smooth Stop
+        self.dec_mod.ServoStopSmooth()
+
+      elif cmd == 'goto_target_start':
+        sys.stderr.write('motion_control: GOTO target start')
+        self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
+        ra_distance = target_ra_pos - self.pos_ra
+        ra_dir = 1.0-2.0*(ra_distance<0)
+        if abs(ra_distance) > self.res_ra/2.0:
+          ra_distance = -ra_dir*(self.res_ra-abs(ra_distance))
+          ra_dir = -ra_dir
+
+        dec_distance = self.target_dec_pos - self.pos_dec
+        dec_dir = 1.0-2.0*(dec_distance<0)
+        if abs(dec_distance) > self.res_dec/2.0:
+          dec_distance = -dec_dir*(self.res_dec-abs(dec_distance))
+          dec_dir = -dec_dir
+
+        target_distance = math.sqrt(ra_distance**2 + dec_distance**2)
+        ra_speed = abs(ra_distance/target_distance)
+        dec_speed = abs(dec_distance/target_distance)
+        servo_ra_goto_rate = int(ra_speed*self.slew_rate*0.000512*2**16)
+        servo_dec_goto_rate = int(dec_speed*self.slew_rate*0.000512*2**16)
+
+        # RA GOTO Target at goto rate
+        self.ra_axis_running = True
+        self.ra_axis_goto = True
+        # RA Servo On
+        self.ra_mod.ServoStopMotor()
+        self.pos_ra = self.ra_mod.ServoGetPos()
+        self.ra_axis_start_pos = self.pos_ra
+        self.ra_axis_start_time = time.time()
+
+        # Dec GOTO Target at goto rate
+        self.dec_axis_running = True
+        # Dec Servo On
+        self.dec_mod.ServoStopMotor()
+        self.pos_dec = self.dec_mod.ServoGetPos()
+        self.dec_axis_start_pos = self.pos_dec
+        self.dec_axis_start_time = time.time()
+
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.target_ra_pos, servo_ra_goto_rate, 400, 0)
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.target_dec_pos, servo_dec_goto_rate, 400, 0)
+
+      elif cmd == 'goto_target_stop':
+        sys.stderr.write('motion_control: GOTO target stop')
+
+      elif cmd == 'motion_continue':
+        pass
+
+      if self.ra_axis_goto:
+        # Update RA GOTO Target
+        self.pos_ra = self.ra_mod.ServoGetPos()
+        self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
+        if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_pos:
+          self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.target_ra_pos, 0)
+
+      if self.ra_axis_running or self.ra_axis_guiding:
+        self.pos_ra = self.ra_mod.ServoGetPos()
+        if self.ra_mod.response[0] & 0x01:
+          if self.ra_axis_goto:
+            self.motion_q.put(['ra_guide_start', None])
+          # Servo Off
+          self.ra_mod.ServoStopMotorOff()
+          self.ra_axis_running = False
+          self.ra_axis_guiding = False
+          self.ra_axis_goto = False
+
+      if self.dec_axis_running:
+        self.pos_dec = self.dec_mod.ServoGetPos()
+        if self.dec_mod.response[0] & 0x01:
+          # Servo Off
+          self.dec_mod.ServoStopMotorOff()
+          self.dec_axis_running = False
+
+      self.motion_running = self.ra_axis_running or self.ra_axis_guiding or self.dec_axis_running
+      if not cmd == 'motion_continue':
+        self.motion_q.task_done()
+
+##################
 
   # Start thread to goto target
   def goto_target_start(self):
@@ -311,7 +448,6 @@ class scope_server:
       self.resume_mode=resume_mode
       self.thread_goto_target.join()
 
-  
   def goto_target_run(self):
     sys.stderr.write('Executing GOTO...\r\n')
 
@@ -327,7 +463,6 @@ class scope_server:
     if abs(dec_distance) > self.res_dec/2.0:
       dec_distance = -dec_dir*(self.res_dec-abs(dec_distance))
       dec_dir = -dec_dir
-
 
     target_distance = math.sqrt(ra_distance**2 + dec_distance**2)
     ra_speed = abs(ra_distance/target_distance)
@@ -360,57 +495,6 @@ class scope_server:
     self.ra_axis_guide_start(self.guide_rate)
 #    self.thread_ra_axis_guide.join()
     sys.stderr.write('Returning from GOTO thread\r\n')
-    
-
-
-  # Start thread to slew RA axis
-  def ra_axis_start(self, direction):
-    self.ra_axis_running = True
-    self.thread_ra_axis = threading.Thread(target=self.ra_axis_run, args=(direction,))
-    self.thread_ra_axis.setDaemon(1)
-    self.thread_ra_axis.start()
-
-
-  # Stop slew of RA axis
-  def ra_axis_stop(self):
-    if self.ra_axis_running:
-      self.ra_axis_running=False
-      self.thread_ra_axis.join()
-
-
-  # Slew RA axis
-  def ra_axis_run(self, direction):
-    self.ra_axis_start_time = time.time()
-    self.ra_axis_start_pos = self.pos_ra
-    while self.ra_axis_running:
-      elapsed_t = time.time() - self.ra_axis_start_time
-      self.pos_ra = (self.ra_axis_start_pos + elapsed_t*direction*self.slew_rate)%self.res_ra
-      time.sleep(0.01)
-
-
-  # Start thread to slew DEC axis
-  def dec_axis_start(self, direction):
-    self.dec_axis_running = True
-    self.thread_dec_axis = threading.Thread(target=self.dec_axis_run, args=(direction,))
-    self.thread_dec_axis.setDaemon(1)
-    self.thread_dec_axis.start()
-
-
-  # Stop slew of DEC axis
-  def dec_axis_stop(self):
-    if self.dec_axis_running:
-      self.dec_axis_running = False
-      self.thread_dec_axis.join()
-
-
-  # Slew DEC axis
-  def dec_axis_run(self, direction):
-    self.dec_axis_start_time = time.time()
-    self.dec_axis_start_pos = self.pos_dec
-    while self.dec_axis_running:
-      elapsed_t = time.time() - self.dec_axis_start_time
-      self.pos_dec = (self.dec_axis_start_pos + elapsed_t*direction*self.slew_rate)%self.res_dec
-      time.sleep(0.01)
 
 
   # Start server thread 
@@ -450,46 +534,54 @@ class scope_server:
         k=inkey()
         if k!='':
           break
+
       # Handle Arrow keys
-
-      # N
+      # N, up arrow
       if k=='\x1b[A':
-        self.pos_dec = (self.pos_dec + self.delta)%self.res_dec
-        sys.stderr.write('  moved N to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        if self.dec_axis_running:
+          self.motion_q.put(['dec_slew_stop', None])
+        else:
+          self.motion_q.put(['dec_slew_start', 1])
+#        sys.stderr.write('  moved N to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
-      # S
+      # S, down arrow
       elif k=='\x1b[B':
-        self.pos_dec = (self.pos_dec - self.delta)%self.res_dec
-        sys.stderr.write('  moved S to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        if self.dec_axis_running:
+          self.motion_q.put(['dec_slew_stop', None])
+        else:
+          self.motion_q.put(['dec_slew_start', -1])
+#        sys.stderr.write('  moved S to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
-      # E
+      # E, right arrow
       elif k=='\x1b[C':
         if self.ra_axis_running:
-          self.ra_axis_start_pos = (self.ra_axis_start_pos - self.delta)%self.res_ra
+          self.motion_q.put(['dec_slew_stop', None])
         elif self.ra_axis_guiding:
-          self.ra_axis_guide_start_pos = (self.ra_axis_guide_start_pos - self.delta)%self.res_ra
+          self.motion_q.put(['ra_slew_start', 1])
         else:
-          self.pos_ra = (self.pos_ra - self.delta)%self.res_ra
-        sys.stderr.write('  moved E to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          self.motion_q.put(['ra_slew_start', 1])
+#        sys.stderr.write('  moved E to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
-      # W
+      # W, left arrow
       elif k=='\x1b[D':
         if self.ra_axis_running:
-          self.ra_axis_start_pos = (self.ra_axis_start_pos + self.delta)%self.res_ra
+          self.motion_q.put(['dec_slew_stop', None])
         elif self.ra_axis_guiding:
-          self.ra_axis_guide_start_pos = (self.ra_axis_guide_start_pos + self.delta)%self.res_ra
+          self.motion_q.put(['ra_slew_start', -1])
         else:
-          self.pos_ra = (self.pos_ra + self.delta)%self.res_ra
-        sys.stderr.write('  moved W to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          self.motion_q.put(['ra_slew_start', -1])
+#        sys.stderr.write('  moved W to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # Start RA axis guiding
       elif k=='g':
-        sys.stderr.write('  Start Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
-        self.ra_axis_guide_start(self.guide_rate)
+        if not self.ra_axis_guiding:
+          sys.stderr.write('  Start Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          self.motion_q.put(['ra_guide_start', None])
 
       # Stop RA axis guiding
       elif k=='s':
-        self.ra_axis_guide_stop(resume_mode='NONE')
+        if self.ra_axis_guiding:
+        self.motion_q.put(['ra_guide_stop', None])
         sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # Report Position
@@ -502,6 +594,7 @@ class scope_server:
       else:
         sys.stderr.write('Unknown key! Please type q to quit.\r\n')
     self.server_stop()
+
 
   # Process ScopeSever Telescope Protocol Commands
   def process_scopeserver_cmd(self,cmd):
@@ -591,73 +684,80 @@ class scope_server:
 
     elif cmd == ':MS#':  # Slew to target
       response = '0'
-      if self.ra_axis_guiding:
-        self.ra_axis_guide_stop(resume_mode='GUIDE')
-      self.ra_axis_stop()
-      self.dec_axis_stop()
-      self.goto_target_start()
+#      if self.ra_axis_guiding:
+#        self.ra_axis_guide_stop(resume_mode='GUIDE')
+#      self.ra_axis_stop()
+#      self.dec_axis_stop()
+#      self.goto_target_start()
+       self.motion_q.put(['goto_target_start',None])
 
     elif cmd == ':Mn#':  # Start move North
-      self.dec_axis_stop()
-      self.goto_target_stop(resume_mode='GOTO')
-      self.dec_axis_start(1.0)
+#      self.dec_axis_stop()
+#      self.goto_target_stop(resume_mode='GOTO')
+#      self.dec_axis_start(1.0)
+      self.motion_q.put(['dec_slew_start',1])
 
     elif cmd == ':Ms#':  # Start move South
-      self.dec_axis_stop()
-      self.goto_target_stop(resume_mode='GOTO')
-      self.dec_axis_start(-1.0)
+#      self.dec_axis_stop()
+#      self.goto_target_stop(resume_mode='GOTO')
+#      self.dec_axis_start(-1.0)
+      self.motion_q.put(['dec_slew_start',-1])
 
     elif cmd == ':Me#':  # Start move East
-      if self.ra_axis_guiding:
-        self.ra_axis_guide_stop(resume_mode='GUIDE')
-      elif self.goto_target_running:
-        self.goto_target_stop(resume_mode='GOTO')
-      self.ra_axis_stop()
-      self.ra_axis_start(1.0)
+#      if self.ra_axis_guiding:
+#        self.ra_axis_guide_stop(resume_mode='GUIDE')
+#      elif self.goto_target_running:
+#        self.goto_target_stop(resume_mode='GOTO')
+#      self.ra_axis_stop()
+#      self.ra_axis_start(1.0)
+      self.motion_q.put(['ra_slew_start',1])
 
     elif cmd == ':Mw#':  # Start move West
-      if self.ra_axis_guiding:
-        self.ra_axis_guide_stop(resume_mode='GUIDE')
-      elif self.goto_target_running:
-        self.goto_target_stop(resume_mode='GOTO')
-      self.ra_axis_stop()
-      self.ra_axis_start(-1.0)
+#      if self.ra_axis_guiding:
+#        self.ra_axis_guide_stop(resume_mode='GUIDE')
+#      elif self.goto_target_running:
+#        self.goto_target_stop(resume_mode='GOTO')
+#      self.ra_axis_stop()
+#      self.ra_axis_start(-1.0)
+      self.motion_q.put(['ra_slew_start',-1])
 
     elif cmd == ':Qn#':  # Stop move North
-      self.dec_axis_stop()
-      if self.resume_mode=='GOTO':
-        self.goto_target_start()
-
-    elif cmd == ':Qs#':  # Stop move South
-      self.dec_axis_stop()
-      if self.resume_mode=='GOTO':
-        self.goto_target_start()
-
-    elif cmd == ':Qe#':  # Stop move East
-      self.ra_axis_stop()
-      if self.resume_mode=='GUIDE':
-        self.ra_axis_guide_start(self.guide_rate)
-      elif self.resume_mode=='GOTO':
-        self.goto_target_start()
-
-    elif cmd == ':Qw#':  # Stop move West
-      self.ra_axis_stop()
-      if self.resume_mode=='GUIDE':
-        self.ra_axis_guide_start(self.guide_rate)
-      elif self.resume_mode=='GOTO':
-        self.goto_target_start()
-
-    elif cmd == ':Q#':  # Stop all slews
-      self.ra_axis_stop()
-      self.dec_axis_stop()
-      if self.ra_axis_guiding:
-        self.ra_axis_guide_stop(resume_mode='GUIDE')
-      elif self.goto_target_running:
-        self.goto_target_stop(resume_mode='GOTO')
-#      if self.resume_mode=='GUIDE':
-#        self.ra_axis_guide_start(self.guide_rate)
+#      self.dec_axis_stop()
 #      if self.resume_mode=='GOTO':
 #        self.goto_target_start()
+      self.motion_q.put(['dec_slew_stop', None])
+
+    elif cmd == ':Qs#':  # Stop move South
+#      self.dec_axis_stop()
+#      if self.resume_mode=='GOTO':
+#        self.goto_target_start()
+      self.motion_q.put(['dec_slew_stop', None])
+
+    elif cmd == ':Qe#':  # Stop move East
+#      self.ra_axis_stop()
+#      if self.resume_mode=='GUIDE':
+#        self.ra_axis_guide_start(self.guide_rate)
+#      elif self.resume_mode=='GOTO':
+#        self.goto_target_start()
+      self.motion_q.put(['ra_slew_stop', None])
+
+    elif cmd == ':Qw#':  # Stop move West
+#      self.ra_axis_stop()
+#      if self.resume_mode=='GUIDE':
+#        self.ra_axis_guide_start(self.guide_rate)
+#      elif self.resume_mode=='GOTO':
+#        self.goto_target_start()
+      self.motion_q.put(['ra_slew_stop', None])
+
+    elif cmd == ':Q#':  # Stop all slews
+#      self.ra_axis_stop()
+#      self.dec_axis_stop()
+#      if self.ra_axis_guiding:
+#        self.ra_axis_guide_stop(resume_mode='GUIDE')
+#      elif self.goto_target_running:
+#        self.goto_target_stop(resume_mode='GOTO')
+      self.motion_q.put(['ra_slew_stop', None])
+      self.motion_q.put(['dec_slew_stop', None])
 
     else:
       pass
