@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
 
 import socket
-import threading
-import socketserver
 import sys
 import tty
 import termios
+import threading
 import time
-import datetime
 import re
 import math
 import numpy as np
-import os
-
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pyPicServo import nmccom
 
 
 # Class to get raw characters from terminal input
@@ -32,158 +26,43 @@ class _Getch:
     return ch
 
 
-class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
-  def handle(self):
-    try:
-      while scope.server_running:
-      # Receive data from client
-        data = self.request.recv(1024)
-#        sys.stderr.write('Server received:  "%s"\r\n' % (data.decode('ascii')))
-        if data:
-          # Process client command
-          cmd = data.decode('ascii').strip()
-          if cmd:
-            if cmd[0] == ':':
-              response = scope.process_lx200_cmd(cmd)
-            if cmd[0] == '{':
-              response = scope.process_scopeserver_cmd(cmd)
-            if response:
-              # Send response to client
-#              sys.stderr.write('Server responding:  %s\r\n' % (response.encode('ascii')))
-              self.request.sendall(response.encode('ascii'))
-        else:
-          return
-    except ConnectionResetError:
-      sys.stderr.write('Connection reset by peer.\r\n')
-      pass
-
-
-class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-  allow_reuse_address = True
-  daemon_threads = True
-  timeout = None
-  request_queue_size = 20
-
-
 class scope_server:
 
-  def __init__(self, scope_mode = 'SIM_SCOPE'):
-    self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
+  def __init__(self):
     self.input_running = False
     self.server_running = False
     self.ra_axis_running = False
     self.dec_axis_running = False
     self.ra_axis_guiding = False
-    self.goto_target_running = False
     self.resume_mode = 'NONE'  # allowed functions:  NONE, GUIDE, GOTO
-    self.res_ra = 576*40000.0
-    self.res_dec = 450*40000.0
-    self.pos_ra = 144*40000.0
-    self.pos_dec = 0*40000.0
+    self.process_cmd = self.process_lx200_cmd
+    self.res_ra = 40000.0
+    self.res_dec = 40000.0
+    self.pos_ra = 10000.0
+    self.pos_dec = 0.0
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
+    self.delta = 1.0
     tropical_year = 365.242190402
 #    self.sidereal_day = 86400*tropical_year/(1.0+tropical_year)
     self.sidereal_day = 86400.0/1.002737909350795
     self.sidereal_rate = self.res_ra/self.sidereal_day
     self.guide_rate = self.sidereal_rate
-    self.delta = 1.0*self.guide_rate
-    sys.stderr.write('\n\nGuide rate set to: %.6g  counts per second\n\n' % (self.guide_rate))
-    self.slew_rate_max = 2*self.res_ra/360.
-    self.slew_rate = self.slew_rate_max
+    self.slew_rate_max = self.res_ra/360.
     self.slew_rate_find = self.slew_rate_max/10
     self.slew_rate_center = self.slew_rate_max/50
     self.slew_rate_guide = self.guide_rate
+    self.slew_rate = self.slew_rate_max
 
     self.timezone = time.timezone
 
-    try:
-      import gpsd
-      gpsd.connect()
-      lat, lon = gpsd.get_current().position()
-      self.site_latitude = lat
-      self.site_longitude = lon
-    except ImportError:
-      self.site_latitude = 33.0831
-      self.site_longitude = -117.2455
-
-    sys.stderr.write('\nStarting Scope Sever in %s mode\n' % (self.scope_mode))
-    sys.stderr.write('    Site location set to: Lat: %.9g   Lon: %.9g\n\n' % (self.site_latitude, self.site_longitude))
-
+    self.latitude = 32.0
     self.target_ra_pos = 0.0
-    self.target_ra_time = '00:00:00'
     self.target_ra_time_array = [0,0,0]
+    self.target_ra_radians = 0.0
     self.target_dec_pos = 0.0
-    self.target_dec_angle = "+00*00'00"
-#    self.target_epsilon_pos = 1.0/2.0
-    self.target_epsilon_pos = 300.0
- 
-    if self.scope_mode == 'REAL_SCOPE':
-      nmc_net = nmccom.NmcNet()
-      nmc_net.Initialize(['RA','Dec'],baudrate=230400)
-      self.ra_mod = nmc_net.modules['RA']
-      self.dec_mod = nmc_net.modules['Dec']
-      self.ra_mod.verbosity = 1
-      self.dec_mod.verbosity = 1
-      self.servo_sidereal_rate = int(self.sidereal_rate*0.000512*2**16)
-      self.servo_ra_fast_rate = int(2*64000*0.000512*2**16)
-      self.servo_dec_fast_rate = int(2*50000*0.000512*2**16)
- 
-      self.ra_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
-      self.dec_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
-      self.ra_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
-      self.dec_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
-      self.ra_mod.ServoSetPos(self.pos_ra)
-      self.dec_mod.ServoSetPos(self.pos_dec)
-
-      # Servo On
-      #self.ra_mod.ServoStopMotor()
-      #self.dec_mod.ServoStopMotor()
-
-      # Servo Off
-      #self.ra_mod.ServoStopMotorOff()
-      #self.dec_mod.ServoStopMotorOff()
-
-      # Slew RA at fast rate
-      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*64000, self.servo_fast_rate, 400, 0)
-      self.ra_mod.NoOp()
-      while not self.ra_mod.response[0] & 0x01:
-        if i%200 == 0:
-          self.ra_mod.PrintFullStatusReport()
-        self.ra_mod.NoOp()
-        i+=1
-
-
-      # Slew RA at sidereal rate
-      pos = self.ra_mod.ServoGetPos()
-      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 180*64000, servo_sidereal_rate, 100, 0)
-      self.ra_mod.NoOp()
-      while not self.ra_mod.response[0] & 0x01:
-        if i%200 == 0:
-          self.ra_mod.PrintFullStatusReport()
-        self.ra_mod.NoOp()
-        i+=1
-
-
-  def get_status(self):
-    status_dict = {}
-
-    status_dict['site_local_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
-    status_dict['site_utc_time'] = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')
-    status_dict['site_latitude'] = self.site_latitude
-    status_dict['site_longitude'] = self.site_longitude
-
-    status_dict['dec_angle'] = self.get_dec_angle()
-    status_dict['dec_pos'] = self.pos_dec
-    status_dict['ra_time'] = self.get_ra_time()
-    status_dict['ra_pos'] = self.pos_ra
-
-    status_dict['target_dec_angle'] = self.target_dec_angle
-    status_dict['target_dec_pos'] = self.target_dec_pos
-    status_dict['target_ra_time'] = self.target_ra_time
-    status_dict['target_ra_pos'] = self.ra_time_array_to_pos(self.target_ra_time_array)
-
-    return status_dict
+    self.target_dec_radians = 0.0
+    self.target_epsilon_pos = 1.0/2.0
 
 
   # Get declination angle position of scope
@@ -247,8 +126,7 @@ class scope_server:
     tt = list(time.localtime(time.time()))
     tt[3:6] = ra_time_array[:]
     ra_time = time.mktime(tuple(tt))
-    dst = 0*3600.0
-    pos = ((ra_time - time.time() - dst)*self.res_ra/86400.0)%self.res_ra
+    pos = ((ra_time - time.time())*self.res_ra/86400.0)%self.res_ra
 #    sys.stderr.write('target ra_time: %02d:%02d:%02d  pos %.9g\r\n' % (ra_time_array[0], ra_time_array[1], ra_time_array[2], pos))
     return (pos)
 
@@ -417,17 +295,10 @@ class scope_server:
   def server_start(self,server_address,port):
     self.input_start()
     self.server_running = True
-
-    self.threaded_server = ThreadedTCPServer((server_address, port), ThreadedTCPRequestHandler)
-
-    # Start a thread with the server -- that thread will then start one
-    # more thread for each request
-    self.server_thread = threading.Thread(target=self.threaded_server.serve_forever)
-    # Exit the server thread when the main thread terminates
-    self.server_thread.daemon = True
-    self.server_thread.start()
-    sys.stderr.write('Waiting for a connection, type q to quit...\r\n')
-    self.server_thread.join()
+    self.thread_server = threading.Thread(target=self.server, args=(server_address, port,))
+    self.thread_server.setDaemon(1)
+    self.thread_server.start()
+    self.thread_server.join()
 
 
   # Stop server thread
@@ -435,10 +306,54 @@ class scope_server:
     if self.server_running:
       self.server_running=False
 #      self.socket.shutdown(socket.SHUT_RDWR)
-#      self.socket.close()
-      sys.stderr.write('Scope Server shutting down.\r\n')
-      self.threaded_server.shutdown()
-      self.server_thread.join()
+      self.socket.close()
+      self.thread_server.join()
+
+
+  # The server
+  def server(self,server_address,port):
+    sys.stderr.write('Scoper Server starting up on %s port %s\r\n' % (server_address, port))
+
+    # Create a TCP/IP socket
+    self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    # Bind the socket to the address and port given
+    self.socket.bind((server_address, port))
+    self.socket.listen(2)
+    sys.stderr.write('Waiting for a connection...\r\n')
+
+    # Enter server loop
+    while self.server_running:
+#        sys.stderr.write('Waiting for a connection...\r\n')
+        try:
+          connection, client_address = self.socket.accept()
+#          sys.stderr.write('Client connected: %s\r\n' % (str(client_address)))
+          try:
+            while self.server_running:
+              # Receive data from client
+              data = connection.recv(16)
+#              sys.stderr.write('Server received:  "%s"\r\n' % (data.decode('ascii')))
+              if data:
+                # Process client command
+                cmd = data.decode('ascii').strip()
+                response = scope.process_cmd(cmd)
+                if response:
+                  # Send response to client
+#                  sys.stderr.write('Server responding:  "%s"\r\n' % (response.encode('ascii')))
+                  connection.sendall(response.encode('ascii'))
+              else:
+                break
+          finally:
+            connection.close()
+
+        # Handle reset by client
+        except ConnectionResetError:
+          sys.stderr.write('Connection reset by peer.\r\n')
+          pass
+        # Shutdown the server
+        except:
+          sys.stderr.write('Scope Server shutting down.\r\n')
 
 
   # Get input from terminal
@@ -451,36 +366,24 @@ class scope_server:
         if k!='':
           break
       # Handle Arrow keys
-
-      # N
       if k=='\x1b[A':
         self.pos_dec = (self.pos_dec + self.delta)%self.res_dec
-        sys.stderr.write('  moved N to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
-
-      # S
+        sys.stderr.write('  moved N to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
       elif k=='\x1b[B':
         self.pos_dec = (self.pos_dec - self.delta)%self.res_dec
-        sys.stderr.write('  moved S to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
-
-      # E
+        sys.stderr.write('  moved S to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
       elif k=='\x1b[C':
         if self.ra_axis_running:
           self.ra_axis_start_pos = (self.ra_axis_start_pos - self.delta)%self.res_ra
-        elif self.ra_axis_guiding:
-          self.ra_axis_guide_start_pos = (self.ra_axis_guide_start_pos - self.delta)%self.res_ra
         else:
           self.pos_ra = (self.pos_ra - self.delta)%self.res_ra
-        sys.stderr.write('  moved E to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
-
-      # W
+        sys.stderr.write('  moved E to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
       elif k=='\x1b[D':
         if self.ra_axis_running:
           self.ra_axis_start_pos = (self.ra_axis_start_pos + self.delta)%self.res_ra
-        elif self.ra_axis_guiding:
-          self.ra_axis_guide_start_pos = (self.ra_axis_guide_start_pos + self.delta)%self.res_ra
         else:
           self.pos_ra = (self.pos_ra + self.delta)%self.res_ra
-        sys.stderr.write('  moved W to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        sys.stderr.write('  moved W to:  %.9g %.9g\r\n' % (self.pos_ra, self.pos_dec))
 
       # Start RA axis guiding
       elif k=='g':
@@ -492,36 +395,12 @@ class scope_server:
         self.ra_axis_guide_stop(resume_mode='NONE')
         sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
-      # Report Position
-      elif k=='p':
-        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
-
       # Shutdown the server
       elif k=='q':
         self.input_running = False
       else:
         sys.stderr.write('Unknown key! Please type q to quit.\r\n')
     self.server_stop()
-
-  # Process ScopeSever Telescope Protocol Commands
-  def process_scopeserver_cmd(self,cmd):
-
-    response = None
-
-    cmd = cmd[1:-1]
-    if cmd == 'get_status':
-      response = str(self.get_status())
-
-    elif cmd == 'shutdown_server':
-      self.server_stop()
-
-    elif cmd == 'shutdown_system':
-      pass
-
-    else:
-      pass
-
-    return response
 
 
   # Process LX200 Telescope Protocol Commands
@@ -531,7 +410,6 @@ class scope_server:
 
     if (cmd != ':GD#') & (cmd != ':GR#'):
       sys.stderr.write('  Processing LX200 cmd: %s\r\n' % (cmd))
-#    sys.stderr.write('  Processing LX200 cmd: %s\r\n' % (cmd))
 
     if cmd == ':GD#':  # Get Dec angle:  sDD*MM'SS#
       response = '%s#' % self.get_dec_angle()
@@ -541,15 +419,14 @@ class scope_server:
       response = '%s#' % self.get_ra_time()
 #      sys.stderr.write('  Server responding: %s\r\n' % (response))
 
-    elif cmd[0:3] == ':St':  # Set site latitude:  sDD*MM#
-      dd, mm = cmd[3:-1].split('*')
-      dd_sign = float(dd[0] + '1')
-      self.site_latitude = float(dd) + dd_sign*float(mm)/60.0
+    elif cmd[0:3] == ':Sg':  # Set site latitude: DDD*MM#
+      ddd, mm = cmd[3:-1].split('*')
+      self.latitude = float(ddd) + float(mm)/60.0
       response = '1'
 
-    elif cmd[0:3] == ':Sg':  # Set site longitude: DDD*MM#
-      ddd, mm = cmd[3:-1].split('*')
-      self.site_longitude = float(ddd) + float(mm)/60.0
+    elif cmd[0:3] == ':St':  # Set site latitude:  sDD*MM#
+      dd, mm = cmd[3:-1].split('*')
+      self.latitude = float(dd) + float(mm)/60.0
       response = '1'
 
     elif cmd[0:3] == ':SG':  # Set UTC offset: sHH.H#
@@ -580,13 +457,13 @@ class scope_server:
       self.slew_rate = self.slew_rate_guide
 
     elif cmd[0:3] == ':Sr':  # Set target object RA:  HH:MM:SS#
-      self.target_ra_time = cmd[3:-1]
       self.set_target_ra_time_array(cmd[3:-1])
+      self.target_ra_radians = self.ra_time_to_radians(cmd[3:-1])
       response = '1'
 
     elif cmd[0:3] == ':Sd':  # Set target object Dec: sDD*MM:SS#
-      self.target_dec_angle = cmd[3:-1]
       self.target_dec_pos = self.dec_angle_to_pos(cmd[3:-1])
+      self.target_dec_radians = self.dec_angle_to_radians(cmd[3:-1])
       response = '1'
 
     elif cmd == ':MS#':  # Slew to target
@@ -669,7 +546,7 @@ if (__name__ == '__main__'):
 
   if (len(sys.argv)<3):
     print('\nUsage: %s server_address port\n' % (sys.argv[0]))
-    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
+    print('   Example: %s 10.0.1.12 4030\n' % (sys.argv[0]))
     sys.exit()
 
   server_address = sys.argv[1]
