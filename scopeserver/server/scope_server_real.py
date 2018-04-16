@@ -68,7 +68,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class scope_server:
 
-  def __init__(self, scope_mode = 'SIM_SCOPE'):
+  def __init__(self, scope_mode = 'REAL_SCOPE'):
     self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
     self.input_running = False
     self.server_running = False
@@ -76,6 +76,7 @@ class scope_server:
     self.motion_running = False
     self.ra_axis_running = False
     self.dec_axis_running = False
+    self.ra_axis_goto = False
     self.ra_axis_guiding = False
     self.goto_target_running = False
     self.resume_mode = 'NONE'  # allowed functions:  NONE, GUIDE, GOTO
@@ -87,8 +88,8 @@ class scope_server:
     self.res_dec = self.worm_gear_dec*self.encoder_res_dec
     self.degree_counts_ra=int(self.res_ra/360)
     self.degree_counts_dec=int(self.res_dec/360)
-    self.pos_ra = 90*self.degrees_count_ra  # home RA angle is 90 degrees
-    self.pos_dec = 0*self.degrees_count_dec  # home Dec angle is 0 degrees
+    self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
+    self.pos_dec = 0*self.degree_counts_dec  # home Dec angle is 0 degrees
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
     tropical_year = 365.242190402
@@ -156,7 +157,7 @@ class scope_server:
       #self.dec_mod.ServoStopMotorOff()
 
       # Slew RA at fast rate
-      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*self.degrees_count_ra, self.servo_fast_rate, 400, 0)
+      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*self.degree_counts_ra, self.servo_fast_rate, 400, 0)
       self.ra_mod.NoOp()
       while not self.ra_mod.response[0] & 0x01:
         if i%200 == 0:
@@ -169,7 +170,7 @@ class scope_server:
       # Servo On
       #self.ra_mod.ServoStopMotor()
       pos = self.ra_mod.ServoGetPos()
-      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 360*self.degrees_count_ra, servo_sidereal_rate, 100, 0)
+      self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 360*self.degree_counts_ra, servo_sidereal_rate, 100, 0)
       self.ra_mod.NoOp()
       while not self.ra_mod.response[0] & 0x01:
         if i%200 == 0:
@@ -202,7 +203,7 @@ class scope_server:
 
   # Get declination angle position of scope
   def get_dec_angle(self):
-    dec_angle = 360.0*self.pos_dec/self.res_dec
+    dec_angle = 360.0*(-self.pos_dec%self.res_dec)/self.res_dec
     dec_dd = int(dec_angle)
     dec_rem = 60*abs(dec_angle - dec_dd)
     dec_mm = int(dec_rem)
@@ -221,7 +222,7 @@ class scope_server:
     mm = float(mm)
     ss = float(ss)
     dec_angle = dd + (dd_sign*(mm/60.0 + ss/3600.0))
-    pos = (self.res_dec*dec_angle/360.0)%self.res_dec
+    pos = -dd_sign*((self.res_dec*dec_angle/360.0)%self.res_dec)
     sys.stderr.write('Target Dec Angle: %s  pos %.9g\r\n' % (dec_angle_str, pos))
     return (pos)
     
@@ -287,13 +288,13 @@ class scope_server:
 
   # Start thread for motion control
   def motion_control_start(self):
-    self.thread_motion_control = threading.Thread(target - self.motion_control)
+    self.thread_motion_control = threading.Thread(target=self.motion_control)
     self.thread_motion_control.setDaemon(1)
     self.thread_motion_control.start()
 
 
   def motion_control(self):
-    sys.stderr.write('motion_control: thread starting...')
+    sys.stderr.write('motion_control: thread starting...\n')
     while True:
       if self.motion_running:
         # if in motion get motion command but do not wait if queue is empty
@@ -303,13 +304,13 @@ class scope_server:
           motion_cmd = ['motion_continue', None]
       else:
         # if not in motion wait to receive motion command
-        sys.stderr.write('motion_control: idle, waiting for command')
+        sys.stderr.write('motion_control: idle, waiting for command\n')
         motion_cmd = self.motion_q.get()
 
       cmd = motion_cmd[0]
       cmd_arg = motion_cmd[1]
       if cmd == 'ra_slew_start':
-        sys.stderr.write('motion_control: RA slew start')
+        sys.stderr.write('motion_control: RA slew start\n')
         # RA Slew at slew rate
         self.ra_axis_running = True
         # RA Servo On
@@ -317,30 +318,30 @@ class scope_server:
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.ra_axis_start_pos = self.pos_ra
         self.ra_axis_start_time = time.time()
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degrees_count_ra, self.servo_ra_slew_rate, 400, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degree_counts_ra, self.servo_ra_slew_rate, 400, 0)
 
       elif cmd == 'ra_slew_stop':
-        sys.stderr.write('motion_control: RA slew stop')
+        sys.stderr.write('motion_control: RA slew stop\n')
         # RA Smooth Stop
         self.ra_mod.ServoStopSmooth()
 
       elif cmd == 'ra_guide_start':
-        sys.stderr.write('motion_control: RA guide start')
+        sys.stderr.write('motion_control: RA guide start\n')
         # Slew RA at sidereal rate
         self.ra_axis_guiding = True
         # Servo On
         self.ra_mod.ServoStopMotor()
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.ra_axis_guide_start_pos = self.pos_ra
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, -180*self.degrees_count_ra, self.servo_sidereal_rate, 100, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, -180*self.degree_counts_ra, self.servo_sidereal_rate, 100, 0)
 
       elif cmd == 'ra_guide_stop':
-        sys.stderr.write('motion_control: RA guide stop')
+        sys.stderr.write('motion_control: RA guide stop\n')
         # RA Smooth Stop
         self.ra_mod.ServoStopSmooth()
 
       elif cmd == 'dec_slew_start':
-        sys.stderr.write('motion_control: Dec slew start')
+        sys.stderr.write('motion_control: Dec slew start\n')
         # Dec Slew at slew rate
         self.dec_axis_running = True
         # Dec Servo On
@@ -348,17 +349,17 @@ class scope_server:
         self.pos_dec = self.dec_mod.ServoGetPos()
         self.dec_axis_start_pos = self.pos_dec
         self.dec_axis_start_time = time.time()
-        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degrees_count_dec, self.servo_dec_slew_rate, 400, 0)
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degree_counts_dec, self.servo_dec_slew_rate, 400, 0)
 
       elif cmd == 'dec_slew_stop':
-        sys.stderr.write('motion_control: Dec slew stop')
+        sys.stderr.write('motion_control: Dec slew stop\n')
         # Dec Smooth Stop
         self.dec_mod.ServoStopSmooth()
 
       elif cmd == 'goto_target_start':
-        sys.stderr.write('motion_control: GOTO target start')
+        sys.stderr.write('motion_control: GOTO target start\n')
         self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
-        ra_distance = target_ra_pos - self.pos_ra
+        ra_distance = self.target_ra_pos - self.pos_ra
         ra_dir = 1.0-2.0*(ra_distance<0)
         if abs(ra_distance) > self.res_ra/2.0:
           ra_distance = -ra_dir*(self.res_ra-abs(ra_distance))
@@ -393,11 +394,11 @@ class scope_server:
         self.dec_axis_start_pos = self.pos_dec
         self.dec_axis_start_time = time.time()
 
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.target_ra_pos, servo_ra_goto_rate, 400, 0)
-        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.target_dec_pos, servo_dec_goto_rate, 400, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_goto_rate, 400, 0)
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), servo_dec_goto_rate, 400, 0)
 
       elif cmd == 'goto_target_stop':
-        sys.stderr.write('motion_control: GOTO target stop')
+        sys.stderr.write('motion_control: GOTO target stop\n')
 
       elif cmd == 'motion_continue':
         pass
@@ -407,7 +408,7 @@ class scope_server:
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
         if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_pos:
-          self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.target_ra_pos, 0)
+          self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
 
       if self.ra_axis_running or self.ra_axis_guiding:
         self.pos_ra = self.ra_mod.ServoGetPos()
@@ -500,6 +501,7 @@ class scope_server:
   # Start server thread 
   def server_start(self,server_address,port):
     self.input_start()
+    self.motion_control_start()
     self.server_running = True
 
     self.threaded_server = ThreadedTCPServer((server_address, port), ThreadedTCPRequestHandler)
@@ -555,7 +557,7 @@ class scope_server:
       # E, right arrow
       elif k=='\x1b[C':
         if self.ra_axis_running:
-          self.motion_q.put(['dec_slew_stop', None])
+          self.motion_q.put(['ra_slew_stop', None])
         elif self.ra_axis_guiding:
           self.motion_q.put(['ra_slew_start', 1])
         else:
@@ -565,7 +567,7 @@ class scope_server:
       # W, left arrow
       elif k=='\x1b[D':
         if self.ra_axis_running:
-          self.motion_q.put(['dec_slew_stop', None])
+          self.motion_q.put(['ra_slew_stop', None])
         elif self.ra_axis_guiding:
           self.motion_q.put(['ra_slew_start', -1])
         else:
@@ -581,8 +583,8 @@ class scope_server:
       # Stop RA axis guiding
       elif k=='s':
         if self.ra_axis_guiding:
-        self.motion_q.put(['ra_guide_stop', None])
-        sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          self.motion_q.put(['ra_guide_stop', None])
+          sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # Report Position
       elif k=='p':
@@ -689,19 +691,19 @@ class scope_server:
 #      self.ra_axis_stop()
 #      self.dec_axis_stop()
 #      self.goto_target_start()
-       self.motion_q.put(['goto_target_start',None])
+      self.motion_q.put(['goto_target_start',None])
 
     elif cmd == ':Mn#':  # Start move North
 #      self.dec_axis_stop()
 #      self.goto_target_stop(resume_mode='GOTO')
 #      self.dec_axis_start(1.0)
-      self.motion_q.put(['dec_slew_start',1])
+      self.motion_q.put(['dec_slew_start',-1])
 
     elif cmd == ':Ms#':  # Start move South
 #      self.dec_axis_stop()
 #      self.goto_target_stop(resume_mode='GOTO')
 #      self.dec_axis_start(-1.0)
-      self.motion_q.put(['dec_slew_start',-1])
+      self.motion_q.put(['dec_slew_start',1])
 
     elif cmd == ':Me#':  # Start move East
 #      if self.ra_axis_guiding:
