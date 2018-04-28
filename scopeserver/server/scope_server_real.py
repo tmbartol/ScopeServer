@@ -138,6 +138,7 @@ class scope_server:
       self.servo_sidereal_rate = int(self.sidereal_rate*0.000512*2**16)
       self.servo_ra_slew_rate = int(self.slew_rate*0.000512*2**16)
       self.servo_dec_slew_rate = int(self.slew_rate*0.000512*2**16)
+      self.servo_accel = 4000
  
       self.ra_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
       self.dec_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
@@ -203,14 +204,13 @@ class scope_server:
 
   # Get declination angle position of scope
   def get_dec_angle(self):
-    dec_angle = 360.0*(-self.pos_dec%self.res_dec)/self.res_dec
+    pos = (self.res_dec - self.pos_dec)%self.res_dec
+    dec_angle = 360.0*pos/self.res_dec
     dec_dd = int(dec_angle)
     dec_rem = 60*abs(dec_angle - dec_dd)
     dec_mm = int(dec_rem)
     dec_ss = int(60*abs(dec_rem - dec_mm))
     return ("%+.2d*%.2d'%.2d" % (dec_dd, dec_mm, dec_ss))
-#    return ('%+.2d*%.2d:%.2d' % (dec_dd, dec_mm, dec_ss))
-#    return ('%+.2d*%.2d' % (dec_dd, dec_mm))
     
 
   # Convert Dec angle string to shaft pos
@@ -221,8 +221,8 @@ class scope_server:
     dd = float(dd)
     mm = float(mm)
     ss = float(ss)
-    dec_angle = dd + (dd_sign*(mm/60.0 + ss/3600.0))
-    pos = -dd_sign*((self.res_dec*dec_angle/360.0)%self.res_dec)
+    dec_angle = (dd + (dd_sign*(mm/60.0 + ss/3600.0)))%360.0
+    pos = (self.res_dec - (self.res_dec*dec_angle/360.0))%self.res_dec
     sys.stderr.write('Target Dec Angle: %s  pos %.9g\r\n' % (dec_angle_str, pos))
     return (pos)
     
@@ -318,7 +318,7 @@ class scope_server:
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.ra_axis_start_pos = self.pos_ra
         self.ra_axis_start_time = time.time()
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degree_counts_ra, self.servo_ra_slew_rate, 400, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degree_counts_ra, self.servo_ra_slew_rate, self.servo_accel, 0)
 
       elif cmd == 'ra_slew_stop':
         sys.stderr.write('motion_control: RA slew stop\n')
@@ -333,7 +333,7 @@ class scope_server:
         self.ra_mod.ServoStopMotor()
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.ra_axis_guide_start_pos = self.pos_ra
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, -180*self.degree_counts_ra, self.servo_sidereal_rate, 100, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, -180*self.degree_counts_ra, self.servo_sidereal_rate, self.servo_accel, 0)
 
       elif cmd == 'ra_guide_stop':
         sys.stderr.write('motion_control: RA guide stop\n')
@@ -349,7 +349,7 @@ class scope_server:
         self.pos_dec = self.dec_mod.ServoGetPos()
         self.dec_axis_start_pos = self.pos_dec
         self.dec_axis_start_time = time.time()
-        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degree_counts_dec, self.servo_dec_slew_rate, 400, 0)
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*180*self.degree_counts_dec, self.servo_dec_slew_rate, self.servo_accel, 0)
 
       elif cmd == 'dec_slew_stop':
         sys.stderr.write('motion_control: Dec slew stop\n')
@@ -394,8 +394,8 @@ class scope_server:
         self.dec_axis_start_pos = self.pos_dec
         self.dec_axis_start_time = time.time()
 
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_goto_rate, 400, 0)
-        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), servo_dec_goto_rate, 400, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_goto_rate, self.servo_accel, 0)
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), servo_dec_goto_rate, self.servo_accel, 0)
 
       elif cmd == 'goto_target_stop':
         sys.stderr.write('motion_control: GOTO target stop\n')
