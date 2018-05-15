@@ -117,6 +117,8 @@ class scope_server:
     self.target_dec_angle = "+00*00'00"
 #    self.target_epsilon_pos = 1.0/2.0
     self.target_epsilon_pos = 300.0
+    self.motor_current_ra = 0
+    self.motor_current_dec = 0
  
     if self.scope_mode == 'REAL_SCOPE':
       nmc_net = nmccom.NmcNet()
@@ -182,6 +184,8 @@ class scope_server:
     status_dict['target_dec_pos'] = self.target_dec_pos
     status_dict['target_ra_time'] = self.target_ra_time
     status_dict['target_ra_pos'] = self.ra_time_array_to_pos(self.target_ra_time_array)
+    status_dict['motor_current_ra'] = self.motor_current_ra
+    status_dict['motor_current_dec'] = self.motor_current_dec
 
     return status_dict
 

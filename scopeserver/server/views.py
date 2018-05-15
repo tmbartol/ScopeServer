@@ -12,7 +12,7 @@ import traceback
 
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
-  HOST, PORT = "10.0.1.21", 4030
+  HOST, PORT = "10.0.1.15", 4030
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -51,6 +51,8 @@ def control(request):
         result['#scope_position_ra'] = '%s (%*.*f)' % (status_dict['ra_time'], 8, 2, status_dict['ra_pos'])
         result['#target_position_dec'] = '%s (%*.*f)' % (status_dict['target_dec_angle'], 8, 2, status_dict['target_dec_pos'])
         result['#target_position_ra'] = '%s (%*.*f)' % (status_dict['target_ra_time'], 8, 2, status_dict['target_ra_pos'])
+        result['#motor_current_ra'] = status_dict['motor_current_ra']
+        result['#motor_current_dec'] = status_dict['motor_current_dec']
         result['status'] = "Success"
     except Exception as e:
       result['status'] = "Failure"

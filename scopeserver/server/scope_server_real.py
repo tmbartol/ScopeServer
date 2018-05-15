@@ -140,6 +140,8 @@ class scope_server:
       self.servo_ra_slew_rate = int(self.slew_rate*0.000512*2**16)
       self.servo_dec_slew_rate = int(self.slew_rate*0.000512*2**16)
       self.servo_accel = 4000
+      self.motor_current_ra = 0
+      self.motor_current_dec = 0
  
       self.ra_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
       self.dec_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
@@ -199,6 +201,8 @@ class scope_server:
     status_dict['target_dec_pos'] = self.target_dec_pos
     status_dict['target_ra_time'] = self.target_ra_time
     status_dict['target_ra_pos'] = self.ra_time_array_to_pos(self.target_ra_time_array)
+    status_dict['motor_current_ra'] = self.motor_current_ra
+    status_dict['motor_current_dec'] = self.motor_current_dec
 
     return status_dict
 
@@ -306,7 +310,7 @@ class scope_server:
           motion_cmd = ['motion_continue', None]
       else:
         # if not in motion wait to receive motion command
-        sys.stderr.write('motion_control: idle, waiting for command\r\n')
+#        sys.stderr.write('motion_control: idle, waiting for command\r\n')
         motion_cmd = self.motion_q.get()
 
       cmd = motion_cmd[0]
@@ -403,8 +407,12 @@ class scope_server:
       elif cmd == 'goto_target_stop':
         sys.stderr.write('motion_control: GOTO target stop\r\n')
 
-      elif cmd == 'motion_continue':
-        pass
+      elif (cmd == 'motion_continue') or (cmd == 'update_pos'):
+        self.pos_ra = self.ra_mod.ServoGetPos()
+        self.pos_dec = self.dec_mod.ServoGetPos()
+        if cmd_arg:
+          sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
 
       if self.ra_axis_goto:
         # Update RA GOTO Target
@@ -591,7 +599,8 @@ class scope_server:
 
       # Report Position
       elif k=='p':
-        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        self.motion_q.put(['update_pos', True])
+#        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # Shutdown the server
       elif k=='q':
@@ -632,10 +641,12 @@ class scope_server:
 #    sys.stderr.write('  Processing LX200 cmd: %s\r\n' % (cmd))
 
     if cmd == ':GD#':  # Get Dec angle:  sDD*MM'SS#
+      self.motion_q.put(['update_pos', None])
       response = '%s#' % self.get_dec_angle()
 #      sys.stderr.write('  Server responding: %s\r\n' % (response))
 
     elif cmd == ':GR#': # Get RA time:  HH:MM:SS#
+      self.motion_q.put(['update_pos', None])
       response = '%s#' % self.get_ra_time()
 #      sys.stderr.write('  Server responding: %s\r\n' % (response))
 

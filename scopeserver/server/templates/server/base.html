@@ -7,15 +7,23 @@
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <meta name="description" content="Scope Server">
       <meta name="author" content="Thomas Bartol">
-      <title>{% block title %}Menu Base Title{% endblock %}</title>
+      <title>{% block title %}ScopeServer Control{% endblock %}</title>
       <script src="/static/js/jquery-3.1.1.min.js"></script>
       <link rel="stylesheet" href="/static/css/server.css" type="text/css">
       <link rel="stylesheet" href="/static/bower_components/bootstrap/dist/css/bootstrap.min.css" type="text/css">
       <!-- <link rel="stylesheet" href="/static/bower_components/bootstrap/dist/css/bootstrap-theme.css" type="text/css"> -->
       <script src="/static/bower_components/bootstrap/dist/js/bootstrap.js"></script>
-      
-
+      <style>
+            div.fixed {
+                position: fixed;
+                width: 100%;
+                bottom: 30px;
+                border: 3px solid #0000FF;
+                background-color: #808080;
+            } 
+      </style>
   </head>
+
 <body>
 {% block body %}
   <p>default block</p>

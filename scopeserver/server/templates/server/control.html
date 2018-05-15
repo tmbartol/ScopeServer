@@ -5,26 +5,70 @@
 
 {% csrf_token %}
 
+<!--
+<div class="page-header">
+  <h1>ScopeServer Controls</h1>
+</div>
+<br />
+-->
+
+<!--  Status Display  -->
+<div class="well well-sm">
 <table id="scopeinfo">
-	<tr><th class="serverlabel">GPS Location:</th><th class="displayvalue" id="gps_location_lat"></th><th class="displayvalue" id="gps_location_lon"></th</tr>
+	<tr><th class="serverlabel">GPS Loc:</th><th class="displayvalue" id="gps_location_lat"></th><th class="displayvalue" id="gps_location_lon"></th</tr>
 	<tr><th class="serverlabel">Local Time</th><th class="displayvalue" id="local_time"></th>
 	<tr><th class="serverlabel">UTC Time</th><th class="displayvalue" id="utc_time"></th>
-	<tr><th class="serverlabel">Scope Position:</th><th class="displayvalue" id="scope_position_dec"></th><th class="displayvalue" id="scope_position_ra"></th></tr>
+	<tr><th class="serverlabel">Scope Pos:</th><th class="displayvalue" id="scope_position_dec"></th><th class="displayvalue" id="scope_position_ra"></th></tr>
 	<tr><th class="serverlabel">GOTO Target:</th><th class="displayvalue" id="target_position_dec"></th><th class="displayvalue" id="target_position_ra"></th></tr>
+	<tr><th class="serverlabel">Motor Current:</th><th class="displayvalue" id="motor_current_dec"></th><th class="displayvalue" id="motor_current_ra"></th></tr>
 </table>
+</div>
 
 
-<div>
+<!--  Scope Slew Controls  -->
+<div align="center">
+    <button class="btn btn-primary" name="_move_north" value="move_north">
+      <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
+    </button>
+</div>
+
+<div align="center">
+    <button class="btn btn-primary" name="_move_west" value="move_west">
+      <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
+    </button>
+    <button class="btn btn-primary" name="_guide" value="guide">
+      <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
+    </button>
+    <button class="btn btn-primary" name="_move_east" value="move_east">
+      <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
+    </button>
+</div>
+
+<div align="center">
+    <button class="btn btn-primary" name="_move_south" value="move_south">
+      <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
+    </button>
+</div>
+
+
+<!--  Raspberry Pi Reboot/Shutdown Controls  -->
+<div class="fixed">
 
   <form method="POST">
     {% csrf_token %}
-    <button class="btn btn-primary" name="_reboot" value="reboot">Reboot &raquo;</button>
-    <button class="btn btn-warning" name="_shutdown" value="shutdown">Shutdown &raquo;</button>
+    <object align="left">
+        <button class="btn btn-primary" name="_reboot" value="reboot">Reboot &raquo;</button>
+    </object>
+    &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp
+    <object align="right">
+        <button class="btn btn-warning" name="_shutdown" value="shutdown">Shutdown &raquo;</button>
+    </object>
   </form>
 
 </div>
 
 
+<!--  Script to Update Status Display  -->
 <script>
 function get_scope_status(){
 	jQuery.ajax({

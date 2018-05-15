@@ -95,13 +95,15 @@ dec_mod.ServoResetPos()
 
 ops = 0
 
+dir = 1
+
 # Slew Dec at forward fast rate
 #dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 30*40000, ra_servo_fast_rate, 400, 0)
-dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 1*360*50000, dec_servo_fast_rate, 400, 0)
+dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, dir*20*360*50000, dec_servo_fast_rate, 400, 0)
 
 # Slew RA at forward fast rate
 #ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 30*40000, ra_servo_fast_rate, 400, 0)
-ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 1*360*64000, ra_servo_fast_rate, 400, 0)
+ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, dir*20*360*64000, ra_servo_fast_rate, 400, 0)
 
 t1 = time.time()
 i = 0
