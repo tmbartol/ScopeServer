@@ -1,5 +1,12 @@
 {% extends "server/base.html" %}
 
+{% block head %}
+	<style>
+		button.slewbutton {
+			margin: 15px 15px 15px 15px;
+		}
+	</style>
+{% endblock %}
 
 {% block body %}
 
@@ -27,25 +34,25 @@
 
 <!--  Scope Slew Controls  -->
 <div align="center">
-    <button class="btn btn-primary" name="_move_north" value="move_north">
+    <button class="btn btn-primary slewbutton" name="_move_north" value="move_north">
       <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
     </button>
 </div>
 
 <div align="center">
-    <button class="btn btn-primary" name="_move_west" value="move_west">
+    <button class="btn btn-primary slewbutton" name="_move_west" value="move_west">
       <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
     </button>
-    <button class="btn btn-primary" name="_guide" value="guide">
+    <button class="btn btn-primary slewbutton" name="_guide" value="guide">
       <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
     </button>
-    <button class="btn btn-primary" name="_move_east" value="move_east">
+    <button class="btn btn-primary slewbutton" name="_move_east" value="move_east">
       <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
     </button>
 </div>
 
 <div align="center">
-    <button class="btn btn-primary" name="_move_south" value="move_south">
+    <button class="btn btn-primary slewbutton" name="_move_south" value="move_south">
       <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
     </button>
 </div>
@@ -57,11 +64,11 @@
   <form method="POST">
     {% csrf_token %}
     <object align="left">
-        <button class="btn btn-primary" name="_reboot" value="reboot">Reboot &raquo;</button>
+        <button class="btn btn-primary" name="action" value="reboot">Reboot &raquo;</button>
     </object>
     &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp
     <object align="right">
-        <button class="btn btn-warning" name="_shutdown" value="shutdown">Shutdown &raquo;</button>
+        <button class="btn btn-warning" name="action" value="shutdown">Shutdown &raquo;</button>
     </object>
   </form>
 
@@ -101,7 +108,7 @@ function get_scope_status(){
 </script>
 
 <script>
- interval_scope_status = setInterval(get_scope_status, 100);
+ interval_scope_status = setInterval(get_scope_status, 500);
 </script>
 
 {% endblock %}

@@ -12,7 +12,7 @@ import traceback
 
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
-  HOST, PORT = "10.0.1.15", 4030
+  HOST, PORT = "198.202.70.203", 4030
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -59,6 +59,12 @@ def control(request):
       result['msg'] = str(e)
     finally:
       return(JsonResponse(result))
+  elif request.method == "POST":
+    action = request.POST.get("action")
+    if action == "reboot":
+      print("REBOOTING BY BUTTON PRESS")
+    elif action == "shutdown":
+      print("SHUTTING DOWN BY BUTTON PRESS")
 
   return(render(request, "server/control.html", locals()))
 
