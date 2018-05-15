@@ -1,114 +1,160 @@
-{% extends "server/base.html" %}
-
-{% block head %}
-	<style>
-		button.slewbutton {
-			margin: 15px 15px 15px 15px;
-		}
-	</style>
-{% endblock %}
-
-{% block body %}
-
-{% csrf_token %}
-
+{% extends "server/base.html" %} {% block head %}
+<style>
+button.slewbutton {
+    margin: 15px 15px 15px 15px;
+}
+</style>
+{% endblock %} {% block body %} {% csrf_token %}
 <!--
 <div class="page-header">
   <h1>ScopeServer Controls</h1>
 </div>
 <br />
 -->
-
 <!--  Status Display  -->
 <div class="well well-sm">
-<table id="scopeinfo">
-	<tr><th class="serverlabel">GPS Loc:</th><th class="displayvalue" id="gps_location_lat"></th><th class="displayvalue" id="gps_location_lon"></th</tr>
-	<tr><th class="serverlabel">Local Time</th><th class="displayvalue" id="local_time"></th>
-	<tr><th class="serverlabel">UTC Time</th><th class="displayvalue" id="utc_time"></th>
-	<tr><th class="serverlabel">Scope Pos:</th><th class="displayvalue" id="scope_position_dec"></th><th class="displayvalue" id="scope_position_ra"></th></tr>
-	<tr><th class="serverlabel">GOTO Target:</th><th class="displayvalue" id="target_position_dec"></th><th class="displayvalue" id="target_position_ra"></th></tr>
-	<tr><th class="serverlabel">Motor Current:</th><th class="displayvalue" id="motor_current_dec"></th><th class="displayvalue" id="motor_current_ra"></th></tr>
-</table>
+    <table id="scopeinfo" border=1>
+        <tr>
+            <th class="serverlabel">GPS Loc:</th>
+            <th class="displayvalue" id="gps_location_lat"></th>
+            <th class="displayvalue" id="gps_location_lon"></th>
+        </tr>
+        <tr>
+            <th class="serverlabel">Local Time</th>
+            <th class="displayvalue" id="local_time"></th>
+            <tr>
+                <th class="serverlabel">UTC Time</th>
+                <th class="displayvalue" id="utc_time"></th>
+            </tr>
+            <tr>
+                <th class="serverlabel">Scope Pos:</th>
+                <th class="displayvalue" id="scope_position_dec"></th>
+                <th class="displayvalue" id="scope_position_ra"></th>
+            </tr>
+            <tr>
+                <th class="serverlabel">GOTO Target:</th>
+                <th class="displayvalue" id="target_position_dec"></th>
+                <th class="displayvalue" id="target_position_ra"></th>
+            </tr>
+            <tr>
+                <th class="serverlabel">Motor Current:</th>
+                <th class="displayvalue" id="motor_current_dec"></th>
+                <th class="displayvalue" id="motor_current_ra"></th>
+            </tr>
+    </table>
 </div>
-
-
 <!--  Scope Slew Controls  -->
 <div align="center">
     <button class="btn btn-primary slewbutton" name="_move_north" value="move_north">
-      <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
+        <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
     </button>
 </div>
-
 <div align="center">
     <button class="btn btn-primary slewbutton" name="_move_west" value="move_west">
-      <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
+        <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
     </button>
     <button class="btn btn-primary slewbutton" name="_guide" value="guide">
-      <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
+        <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
     </button>
     <button class="btn btn-primary slewbutton" name="_move_east" value="move_east">
-      <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
+        <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
     </button>
 </div>
-
 <div align="center">
     <button class="btn btn-primary slewbutton" name="_move_south" value="move_south">
-      <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
+        <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
     </button>
 </div>
-
-
 <!--  Raspberry Pi Reboot/Shutdown Controls  -->
 <div class="fixed">
-
-  <form method="POST">
-    {% csrf_token %}
-    <object align="left">
-        <button class="btn btn-primary" name="action" value="reboot">Reboot &raquo;</button>
-    </object>
-    &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp &nbsp
-    <object align="right">
-        <button class="btn btn-warning" name="action" value="shutdown">Shutdown &raquo;</button>
-    </object>
-  </form>
-
+    <form method="POST">
+        {% csrf_token %}
+        <object align="left">
+            <button class="btn btn-primary" name="action" value="reboot">Reboot &raquo;</button>
+        </object>
+        <object align="right">
+            <button class="btn btn-warning" name="action" value="shutdown">Shutdown &raquo;</button>
+        </object>
+    </form>
 </div>
-
-
 <!--  Script to Update Status Display  -->
 <script>
-function get_scope_status(){
-	jQuery.ajax({
-	    data: {
-	        csrfmiddlewaretoken: csrftoken,
-	        action: "serverStatus",
-	    },
-	    type: 'POST',
-	    success: function(result){
-	        if (result['status'] == "Success") {
-	        	console.log(result);
-	        	for (var key in result) {
-	        	    if ( key != "status") {
-	        	    	var value = result[key];
-	        	    	console.log(value);	
-	        	    	$(key).html(value);
-	        	    }
-	        	    
-	        	}
-	        } else {
-	            alert(result['msg']);
-	            window.location.reload();
-	        }
-	    },
-	    error: function(jqXHR, textStatus, String){
-	        alert(String);
-	    }, 
-	});	
+function get_scope_status() {
+    jQuery.ajax({
+        data: {
+            csrfmiddlewaretoken: csrftoken,
+            action: "serverStatus",
+        },
+        type: 'POST',
+        success: function(result) {
+            if (result['status'] == "Success") {
+                console.log(result);
+                for (var key in result) {
+                    if (key != "status") {
+                        var value = result[key];
+                        console.log(value);
+                        $(key).html(value);
+                    }
+
+                }
+            } else {
+                alert(result['msg']);
+                window.location.reload();
+            }
+        },
+        error: function(jqXHR, textStatus, String) {
+            alert(String);
+        },
+    });
 }
 </script>
 
 <script>
- interval_scope_status = setInterval(get_scope_status, 500);
+    function slewSend(e){
+        jQuery.ajax({
+            data: {
+                csrfmiddlewaretoken: csrftoken,
+                slew: e.target.name,
+                mouse: e.type,
+            },
+            type: 'POST',
+            success: function(result) {
+                if (result['status'] == "Success") {
+                    console.log(result);
+                    for (var key in result) {
+                        if (key != "status") {
+                            var value = result[key];
+                            console.log(value);
+                            $(key).html(value);
+                        }
+
+                    }
+                } else {
+                    alert(result['msg']);
+                    window.location.reload();
+                }
+            },
+            error: function(jqXHR, textStatus, String) {
+                alert(String);
+            },
+        });
+    }
+    $(".slewbutton").mousedown(function(e){
+        console.log(e.target.name);
+        slewSend(e);
+    });
+
+    $(".slewbutton").mouseup(function(e){
+        console.log(e.target.name);
+        slewSend(e);
+    });
+    
+
 </script>
 
+
+
+<script>
+interval_scope_status = setInterval(get_scope_status, 200);
+</script>
 {% endblock %}
