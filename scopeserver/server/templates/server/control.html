@@ -45,23 +45,23 @@ button.slewbutton {
 </div>
 <!--  Scope Slew Controls  -->
 <div align="center">
-    <button class="btn btn-primary slewbutton" name="_move_north" value="move_north">
+    <button class="btn btn-primary slewbutton" name="slew_north" value="north">
         <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
     </button>
 </div>
 <div align="center">
-    <button class="btn btn-primary slewbutton" name="_move_west" value="move_west">
+    <button class="btn btn-primary slewbutton" name="slew_west" value="west">
         <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
     </button>
     <button class="btn btn-primary slewbutton" name="_guide" value="guide">
         <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
     </button>
-    <button class="btn btn-primary slewbutton" name="_move_east" value="move_east">
+    <button class="btn btn-primary slewbutton" name="slew_east" value="east">
         <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
     </button>
 </div>
 <div align="center">
-    <button class="btn btn-primary slewbutton" name="_move_south" value="move_south">
+    <button class="btn btn-primary slewbutton" name="slew_south" value="south">
         <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
     </button>
 </div>
@@ -155,6 +155,6 @@ function get_scope_status() {
 
 
 <script>
-var interval_scope_status = setInterval(get_scope_status, 200);
+  var interval_scope_status = setInterval(get_scope_status, 200);
 </script>
 {% endblock %}

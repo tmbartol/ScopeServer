@@ -42,24 +42,34 @@ def control(request):
     if slew:
       mouse = request.POST.get("mouse") == "mousedown"
 
-      if slew == "_move_east":
+      if slew == "slew_north":
         if mouse:
-          print("Start East")
+          print("Start Slew North")
         else:
-          print("Stop East")
+          print("Stop Slew North")
 
-      elif slew == "_move_north":
+      elif slew == "slew_south":
         if mouse:
-          print("Start North")
+          print("Start Slew South")
         else:
-          print("Stop North")
+          print("Stop Slew South")
+
+      elif slew == "slew_east":
+        if mouse:
+          print("Start Slew East")
+        else:
+          print("Stop Slew East")
+
+      elif slew == "slew_west":
+        if mouse:
+          print("Start Slew West")
+        else:
+          print("Stop Slew West")
 
       result['status'] = "Success"
       return(JsonResponse(result))
 
     action = request.POST.get("action", "")
-
-    
     try:
       if action == "serverStatus":
         scope_status = send_scopeserver_cmd('{get_status}')
