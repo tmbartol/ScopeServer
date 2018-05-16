@@ -12,7 +12,7 @@ import traceback
 
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
-  HOST, PORT = "192.168.50.5", 4030
+  HOST, PORT = "0.0.0.0", 4030
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -68,6 +68,7 @@ def control(request):
 
       result['status'] = "Success"
       return(JsonResponse(result))
+    
 
     action = request.POST.get("action", "")
     try:

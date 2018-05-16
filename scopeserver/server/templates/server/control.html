@@ -66,6 +66,7 @@ button.slewbutton {
     </button>
 </div>
 <!--  Raspberry Pi Reboot/Shutdown Controls  -->
+<div align="center" style="color:red" id="errorDiv"></div>
 <div class="fixed">
     <form method="POST">
         {% csrf_token %}
@@ -88,22 +89,21 @@ function get_scope_status() {
         type: 'POST',
         success: function(result) {
             if (result['status'] == "Success") {
-                console.log(result);
                 for (var key in result) {
                     if (key != "status") {
                         var value = result[key];
-                        console.log(value);
                         $(key).html(value);
                     }
 
                 }
+                $("#errorDiv").html("");
             } else {
-                alert(result['msg']);
+                console.log(result);
                 window.location.reload();
             }
         },
         error: function(jqXHR, textStatus, String) {
-            alert(String);
+            $("#errorDiv").html("Error contacting the scope server");
         },
     });
 }
@@ -114,17 +114,15 @@ function get_scope_status() {
         jQuery.ajax({
             data: {
                 csrfmiddlewaretoken: csrftoken,
-                slew: e.target.name,
+                slew: e.currentTarget.name,
                 mouse: e.type,
             },
             type: 'POST',
             success: function(result) {
                 if (result['status'] == "Success") {
-                    console.log(result);
                     for (var key in result) {
                         if (key != "status") {
                             var value = result[key];
-                            console.log(value);
                             $(key).html(value);
                         }
 
@@ -135,17 +133,15 @@ function get_scope_status() {
                 }
             },
             error: function(jqXHR, textStatus, String) {
-                alert(String);
+                $("#errorDiv").html("Error contacting the slew server");
             },
         });
     }
     $(".slewbutton").mousedown(function(e){
-        console.log(e.target.name);
         slewSend(e);
     });
 
     $(".slewbutton").mouseup(function(e){
-        console.log(e.target.name);
         slewSend(e);
     });
     
