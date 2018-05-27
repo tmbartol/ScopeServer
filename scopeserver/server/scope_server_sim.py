@@ -516,8 +516,14 @@ class scope_server:
     if cmd == 'get_status':
       response = str(self.get_status())
 
+    elif cmd == 'reset_server':
+      pass
+
     elif cmd == 'shutdown_server':
       self.server_stop()
+
+    elif cmd == 'reboot_system':
+      pass
 
     elif cmd == 'shutdown_system':
       pass

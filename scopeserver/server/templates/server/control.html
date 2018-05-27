@@ -3,6 +3,9 @@
 button.slewbutton {
     margin: 15px 15px 15px 15px;
 }
+button.guidebutton {
+    margin: 15px 15px 15px 15px;
+}
 </style>
 {% endblock %} {% block body %} {% csrf_token %}
 <!--
@@ -53,7 +56,7 @@ button.slewbutton {
     <button class="btn btn-primary slewbutton" name="slew_west" value="west">
         <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
     </button>
-    <button class="btn btn-primary slewbutton" name="_guide" value="guide">
+    <button class="btn btn-primary guidebutton" name="slew_guide" value="guide">
         <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
     </button>
     <button class="btn btn-primary slewbutton" name="slew_east" value="east">
@@ -103,7 +106,7 @@ function get_scope_status() {
             }
         },
         error: function(jqXHR, textStatus, String) {
-            $("#errorDiv").html("Error contacting the scope server");
+            $("#errorDiv").html("Error Contacting ScopeServer");
         },
     });
 }
@@ -133,7 +136,7 @@ function get_scope_status() {
                 }
             },
             error: function(jqXHR, textStatus, String) {
-                $("#errorDiv").html("Error contacting the slew server");
+                $("#errorDiv").html("Error Contacting ScopeServer");
             },
         });
     }
@@ -142,6 +145,10 @@ function get_scope_status() {
     });
 
     $(".slewbutton").mouseup(function(e){
+        slewSend(e);
+    });
+    
+    $(".guidebutton").click(function(e){
         slewSend(e);
     });
     

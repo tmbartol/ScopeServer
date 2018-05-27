@@ -45,26 +45,34 @@ def control(request):
       if slew == "slew_north":
         if mouse:
           print("Start Slew North")
+          response = send_scopeserver_cmd(':Mn#')
         else:
           print("Stop Slew North")
+          response = send_scopeserver_cmd(':Qn#')
 
       elif slew == "slew_south":
         if mouse:
           print("Start Slew South")
+          response = send_scopeserver_cmd(':Ms#')
         else:
           print("Stop Slew South")
+          response = send_scopeserver_cmd(':Qs#')
 
       elif slew == "slew_east":
         if mouse:
           print("Start Slew East")
+          response = send_scopeserver_cmd(':Me#')
         else:
           print("Stop Slew East")
+          response = send_scopeserver_cmd(':Qe#')
 
       elif slew == "slew_west":
         if mouse:
           print("Start Slew West")
+          response = send_scopeserver_cmd(':Mw#')
         else:
           print("Stop Slew West")
+          response = send_scopeserver_cmd(':Qw#')
 
       result['status'] = "Success"
       return(JsonResponse(result))
