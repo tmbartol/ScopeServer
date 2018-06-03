@@ -28,7 +28,7 @@ SECRET_KEY = '89b4!6^z2$&5wql-bry9%*sec#!ryo=o@02)fh_!1s0_g%-n&c'
 DEBUG = True
 
 
-ALLOWED_HOSTS = ["lucia.dhcp.snl.salk.edu","10.0.1.13","10.0.1.15","10.0.1.21","192.168.50.5","192.168.0.1","192.168.0.13","localhost", "0.0.0.0"]
+ALLOWED_HOSTS = ["lucia.dhcp.snl.salk.edu","10.0.1.13","10.0.1.14","10.0.1.15","10.0.1.21","192.168.50.5","192.168.0.1","192.168.0.13","localhost", "0.0.0.0"]
 
 
 # Application definition

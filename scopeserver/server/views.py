@@ -12,7 +12,11 @@ import traceback
 
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
-  HOST, PORT = "0.0.0.0", 4030
+#  HOST, PORT = "0.0.0.0", 4030
+#  HOST, PORT = "10.0.1.14", 4030
+#  HOST, PORT = "192.168.50.5", 4030
+  HOST, PORT = "10.0.1.15", 4030
+
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -43,36 +47,24 @@ def control(request):
       mouse = request.POST.get("mouse") == "mousedown"
 
       if slew == "slew_north":
-        if mouse:
-          print("Start Slew North")
-          response = send_scopeserver_cmd(':Mn#')
-        else:
-          print("Stop Slew North")
-          response = send_scopeserver_cmd(':Qn#')
+        print("Toggle Slew North")
+        response = send_scopeserver_cmd('{toggle_slew_north}')
 
       elif slew == "slew_south":
-        if mouse:
-          print("Start Slew South")
-          response = send_scopeserver_cmd(':Ms#')
-        else:
-          print("Stop Slew South")
-          response = send_scopeserver_cmd(':Qs#')
+        print("Toggle Slew South")
+        response = send_scopeserver_cmd('{toggle_slew_south}')
 
       elif slew == "slew_east":
-        if mouse:
-          print("Start Slew East")
-          response = send_scopeserver_cmd(':Me#')
-        else:
-          print("Stop Slew East")
-          response = send_scopeserver_cmd(':Qe#')
+        print("Toggle Slew East")
+        response = send_scopeserver_cmd('{toggle_slew_east}')
 
       elif slew == "slew_west":
-        if mouse:
-          print("Start Slew West")
-          response = send_scopeserver_cmd(':Mw#')
-        else:
-          print("Stop Slew West")
-          response = send_scopeserver_cmd(':Qw#')
+        print("Toggle Slew West")
+        response = send_scopeserver_cmd('{toggle_slew_west}')
+
+      elif slew == "slew_guide":
+          print("Toggle Guide Mode")
+          response = send_scopeserver_cmd('{toggle_slew_guide}')
 
       result['status'] = "Success"
       return(JsonResponse(result))

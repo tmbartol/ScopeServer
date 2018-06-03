@@ -528,6 +528,41 @@ class scope_server:
     elif cmd == 'shutdown_system':
       pass
 
+    # Toggle RA axis guiding
+    elif cmd == 'toggle_slew_guide':
+      if not self.ra_axis_guiding:
+        # Start RA axis guiding
+        sys.stderr.write('  Start Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        self.ra_axis_guide_start(self.guide_rate)
+      else:
+        # Stop RA axis guiding
+        self.ra_axis_guide_stop(resume_mode='NONE')
+        sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
+    elif cmd == 'toggle_slew_north':
+      if not self.dec_axis_running:
+        self.process_lx200_cmd(':Mn#')
+      else:
+        self.process_lx200_cmd(':Qn#')
+
+    elif cmd == 'toggle_slew_south':
+      if not self.dec_axis_running:
+        self.process_lx200_cmd(':Ms#')
+      else:
+        self.process_lx200_cmd(':Qs#')
+
+    elif cmd == 'toggle_slew_east':
+      if not self.ra_axis_running:
+        self.process_lx200_cmd(':Me#')
+      else:
+        self.process_lx200_cmd(':Qe#')
+
+    elif cmd == 'toggle_slew_west':
+      if not self.ra_axis_running:
+        self.process_lx200_cmd(':Mw#')
+      else:
+        self.process_lx200_cmd(':Qw#')
+
     else:
       pass
 

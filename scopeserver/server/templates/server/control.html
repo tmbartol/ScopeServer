@@ -140,14 +140,10 @@ function get_scope_status() {
             },
         });
     }
-    $(".slewbutton").mousedown(function(e){
+    $(".slewbutton").click(function(e){
         slewSend(e);
     });
 
-    $(".slewbutton").mouseup(function(e){
-        slewSend(e);
-    });
-    
     $(".guidebutton").click(function(e){
         slewSend(e);
     });
