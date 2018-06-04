@@ -6,6 +6,9 @@ button.slewbutton {
 button.guidebutton {
     margin: 15px 15px 15px 15px;
 }
+button.actionbutton {
+    margin: 0px 0px 0px 0px;
+}
 </style>
 {% endblock %} {% block body %} {% csrf_token %}
 <!--
@@ -68,19 +71,20 @@ button.guidebutton {
         <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
     </button>
 </div>
-<!--  Raspberry Pi Reboot/Shutdown Controls  -->
+
+<!--  Display ScopeServer Error Message  -->
 <div align="center" style="color:red" id="errorDiv"></div>
+
+<!--  Raspberry Pi Reboot/Shutdown Controls  -->
 <div class="fixed">
-    <form method="POST">
-        {% csrf_token %}
-        <object align="left">
-            <button class="btn btn-primary" name="action" value="reboot">Reboot &raquo;</button>
-        </object>
-        <object align="right">
-            <button class="btn btn-warning" name="action" value="shutdown">Shutdown &raquo;</button>
-        </object>
-    </form>
+    <object align="left">
+        <button class="btn btn-primary actionbutton" name="reboot" value="reboot">Reboot &raquo;</button>
+    </object>
+    <object align="right">
+        <button class="btn btn-warning actionbutton" name="shutdown" value="shutdown">Shutdown &raquo;</button>
+    </object>
 </div>
+
 <!--  Script to Update Status Display  -->
 <script>
 function get_scope_status() {
@@ -97,7 +101,6 @@ function get_scope_status() {
                         var value = result[key];
                         $(key).html(value);
                     }
-
                 }
                 $("#errorDiv").html("");
             } else {
@@ -112,6 +115,7 @@ function get_scope_status() {
 }
 </script>
 
+<!--  Slew Control Script   -->
 <script>
     function slewSend(e){
         jQuery.ajax({
@@ -128,7 +132,6 @@ function get_scope_status() {
                             var value = result[key];
                             $(key).html(value);
                         }
-
                     }
                 } else {
                     alert(result['msg']);
@@ -143,15 +146,41 @@ function get_scope_status() {
     $(".slewbutton").click(function(e){
         slewSend(e);
     });
-
     $(".guidebutton").click(function(e){
         slewSend(e);
     });
-    
-
 </script>
 
-
+<script>
+    function actionSend(e){
+        jQuery.ajax({
+            data: {
+                csrfmiddlewaretoken: csrftoken,
+                action: e.currentTarget.name,
+            },
+            type: 'POST',
+            success: function(result) {
+                if (result['status'] == "Success") {
+                    for (var key in result) {
+                        if (key != "status") {
+                            var value = result[key];
+                            $(key).html(value);
+                        }
+                    }
+                } else {
+                    alert(result['msg']);
+                    window.location.reload();
+                }
+            },
+            error: function(jqXHR, textStatus, String) {
+                $("#errorDiv").html("Error Contacting ScopeServer");
+            },
+        });
+    }
+    $(".actionbutton").click(function(e){
+        actionSend(e);
+    });
+</script>
 
 <script>
   var interval_scope_status = setInterval(get_scope_status, 200);

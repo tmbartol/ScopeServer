@@ -1,2 +1,6 @@
 
 python3 manage.py runserver 10.0.1.15:8000
+
+-or-
+
+./start_server.py

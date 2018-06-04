@@ -17,6 +17,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyPicServo import nmccom
 
 
+# Get IP address
+import netifaces as ni
+def get_ip(iface = 'wlan0'):
+  try:
+    ni.ifaddresses(iface)
+    ip = ni.ifaddresses(iface)[ni.AF_INET][0]['addr']
+  except:
+    ip = '127.0.0.1'
+  return ip
+
+
 # Class to get raw characters from terminal input
 class _Getch:
   def __call__(self):
@@ -712,13 +723,18 @@ class scope_server:
 
 if (__name__ == '__main__'):
 
-  if (len(sys.argv)<3):
-    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
-    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
-    sys.exit()
+#  if (len(sys.argv)<3):
+#    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
+#    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
+#    sys.exit()
+#  server_address = sys.argv[1]
+#  port = int(sys.argv[2])
 
-  server_address = sys.argv[1]
-  port = int(sys.argv[2])
+  server_address = get_ip()
+  port = 4030
+
+  print("\n\nStarting ScopeServer at %s port %d" % (server_address, port))
+
   scope = scope_server()
   scope.server_start(server_address, port)
 

@@ -9,14 +9,29 @@ import time
 import socket
 import sys
 import traceback
+import subprocess
+
+
+# Get IP address
+import netifaces as ni
+def get_ip(iface = 'wlan0'):
+  try:
+    ni.ifaddresses(iface)
+    ip = ni.ifaddresses(iface)[ni.AF_INET][0]['addr']
+  except:
+    ip = '127.0.0.1'
+  return ip
+
 
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
 #  HOST, PORT = "0.0.0.0", 4030
 #  HOST, PORT = "10.0.1.14", 4030
 #  HOST, PORT = "192.168.50.5", 4030
-  HOST, PORT = "10.0.1.15", 4030
-
+#  HOST, PORT = "10.0.1.15", 4030
+ 
+  HOST = get_ip()
+  PORT = 4030
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -86,17 +101,33 @@ def control(request):
         result['#motor_current_ra'] = status_dict['motor_current_ra']
         result['#motor_current_dec'] = status_dict['motor_current_dec']
         result['status'] = "Success"
+      elif action == "reboot":
+        print("REBOOTING BY BUTTON PRESS")
+        time.sleep(1)
+        subprocess.check_output(["sudo reboot"],shell=True)
+      elif action == "shutdown":
+        print("SHUTTING DOWN BY BUTTON PRESS")
+        time.sleep(1)
+        subprocess.check_output(["sudo shutdown now"],shell=True)
+
     except Exception as e:
       result['status'] = "Failure"
       result['msg'] = str(e)
     finally:
       return(JsonResponse(result))
   elif request.method == "POST":
+    pass
+    '''
     action = request.POST.get("action")
     if action == "reboot":
       print("REBOOTING BY BUTTON PRESS")
+      time.sleep(1)
+      subprocess.check_output(["sudo reboot"],shell=True)
     elif action == "shutdown":
       print("SHUTTING DOWN BY BUTTON PRESS")
+      time.sleep(1)
+      subprocess.check_output(["sudo shutdown now"],shell=True)
+    '''
 
   return(render(request, "server/control.html", locals()))
 
