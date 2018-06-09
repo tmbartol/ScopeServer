@@ -723,15 +723,15 @@ class scope_server:
 
 if (__name__ == '__main__'):
 
-#  if (len(sys.argv)<3):
-#    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
-#    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
-#    sys.exit()
-#  server_address = sys.argv[1]
-#  port = int(sys.argv[2])
+  if (len(sys.argv)<3):
+    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
+    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
+    sys.exit()
+  server_address = sys.argv[1]
+  port = int(sys.argv[2])
 
-  server_address = get_ip()
-  port = 4030
+#  server_address = get_ip()
+#  port = 4030
 
   print("\n\nStarting ScopeServer at %s port %d" % (server_address, port))
 
