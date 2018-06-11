@@ -130,6 +130,9 @@ class scope_server:
     self.target_epsilon_pos = 300.0
     self.motor_current_ra = 0
     self.motor_current_dec = 0
+    self.pos_error_ra = 0
+    self.pos_error_dec = 0
+
  
     if self.scope_mode == 'REAL_SCOPE':
       nmc_net = nmccom.NmcNet()
@@ -197,6 +200,9 @@ class scope_server:
     status_dict['target_ra_pos'] = self.ra_time_array_to_pos(self.target_ra_time_array)
     status_dict['motor_current_ra'] = self.motor_current_ra
     status_dict['motor_current_dec'] = self.motor_current_dec
+    status_dict['pos_error_ra'] = self.pos_error_ra
+    status_dict['pos_error_dec'] = self.pos_error_dec
+
 
     return status_dict
 
@@ -723,15 +729,15 @@ class scope_server:
 
 if (__name__ == '__main__'):
 
-#  if (len(sys.argv)<3):
-#    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
-#    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
-#    sys.exit()
-#  server_address = sys.argv[1]
-#  port = int(sys.argv[2])
+  if (len(sys.argv)<3):
+    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
+    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
+    sys.exit()
+  server_address = sys.argv[1]
+  port = int(sys.argv[2])
 
-  server_address = get_ip()
-  port = 4030
+#  server_address = get_ip()
+#  port = 4030
 
   print("\nStarting ScopeServer at %s port %d" % (server_address, port))
 
