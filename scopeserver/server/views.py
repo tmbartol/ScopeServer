@@ -30,7 +30,7 @@ def send_scopeserver_cmd(cmd):
 #  HOST, PORT = "10.0.1.14", 4030
 #  HOST, PORT = "192.168.50.5", 4030
 #  HOST, PORT = "10.0.1.15", 4030
-  HOST, PORT = "10.0.71.43", 4030
+  HOST, PORT = "169.254.135.86", 4030
  
 #  HOST = get_ip()
 #  PORT = 4030
@@ -62,6 +62,49 @@ def control(request):
     slew = request.POST.get("slew")
     if slew:
       mouse = request.POST.get("mouse") == "mousedown"
+      print (slew)
+      if slew == "slew_north":
+        if mouse:
+          print("Start Slew North")
+          response = send_scopeserver_cmd(':Mn#')
+        else:
+          print("Stop Slew North")
+          response = send_scopeserver_cmd(':Qn#')
+
+      elif slew == "slew_south":
+        if mouse:
+          print("Start Slew South")
+          response = send_scopeserver_cmd(':Ms#')
+        else:
+          print("Stop Slew South")
+          response = send_scopeserver_cmd(':Qs#')
+
+      elif slew == "slew_east":
+        if mouse:
+          print("Start Slew East")
+          response = send_scopeserver_cmd(':Me#')
+        else:
+          print("Stop Slew East")
+          response = send_scopeserver_cmd(':Qe#')
+
+      elif slew == "slew_west":
+        if mouse:
+          print("Start Slew West")
+          response = send_scopeserver_cmd(':Mw#')
+        else:
+          print("Stop Slew West")
+          response = send_scopeserver_cmd(':Qw#')
+
+      elif slew == "slew_guide":
+          print("Toggle Guide Mode")
+          response = send_scopeserver_cmd('{toggle_slew_guide}')
+
+      result['status'] = "Success"
+      return(JsonResponse(result))
+
+    ''' This is the toggle method
+    if slew:
+      mouse = request.POST.get("mouse") == "mousedown"
 
       if slew == "slew_north":
         print("Toggle Slew North")
@@ -85,7 +128,7 @@ def control(request):
 
       result['status'] = "Success"
       return(JsonResponse(result))
-    
+    '''
 
     action = request.POST.get("action", "")
     try:
