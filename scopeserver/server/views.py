@@ -7,6 +7,7 @@ from pdb import set_trace as debug
 import datetime
 import time
 import socket
+import os
 import sys
 import traceback
 import subprocess
@@ -26,12 +27,12 @@ def get_ip(iface = 'wlan0'):
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
 #  HOST, PORT = "0.0.0.0", 4030
-  HOST, PORT = "10.0.1.14", 4030
+#  HOST, PORT = "10.0.1.14", 4030
 #  HOST, PORT = "192.168.50.5", 4030
 #  HOST, PORT = "10.0.1.15", 4030
  
-#  HOST = get_ip()
-#  PORT = 4030
+  HOST = get_ip()
+  PORT = 4030
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -94,13 +95,19 @@ def control(request):
         result['#gps_location_lon'] = status_dict['site_longitude']
         result['#local_time'] = status_dict['site_local_time'][:-5]
         result['#utc_time'] = status_dict['site_utc_time'][:-5]
-        result['#scope_position_dec'] = '%s (%*.*f)' % (status_dict['dec_angle'], 8, 2, status_dict['dec_pos'])
-        result['#scope_position_ra'] = '%s (%*.*f)' % (status_dict['ra_time'], 8, 2, status_dict['ra_pos'])
-        result['#target_position_dec'] = '%s (%*.*f)' % (status_dict['target_dec_angle'], 8, 2, status_dict['target_dec_pos'])
-        result['#target_position_ra'] = '%s (%*.*f)' % (status_dict['target_ra_time'], 8, 2, status_dict['target_ra_pos'])
-        result['#motor_current_ra'] = status_dict['motor_current_ra']
-        result['#motor_current_dec'] = status_dict['motor_current_dec']
+        result['#scope_position_dec'] = '%s (%d)' % (status_dict['dec_angle'], status_dict['dec_pos'])
+        result['#scope_position_ra'] = '%s (%d)' % (status_dict['ra_time'], status_dict['ra_pos'])
+        result['#target_position_dec'] = '%s (%d)' % (status_dict['target_dec_angle'], status_dict['target_dec_pos'])
+        result['#target_position_ra'] = '%s (%d)' % (status_dict['target_ra_time'], status_dict['target_ra_pos'])
+        result['#motor_current_dec'] = '%d' % (status_dict['motor_current_dec'])
+        result['#motor_current_ra'] = '%d' % (status_dict['motor_current_ra'])
+        result['#pos_error_dec'] = '%d' % (status_dict['pos_error_dec'])
+        result['#pos_error_ra'] = '%d' % (status_dict['pos_error_ra'])
         result['status'] = "Success"
+      elif action == "reset":
+        print("RESETTING BY BUTTON PRESS")
+        time.sleep(1)
+        os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_control_reset.sh &')
       elif action == "reboot":
         print("REBOOTING BY BUTTON PRESS")
         time.sleep(1)

@@ -37,7 +37,7 @@ SEND_AUX =       0x08
 SEND_HOME_POS =  0x10
 SEND_DEV_TYPE =  0x20
 SEND_POS_ERR =   0x40
-SEND_PATH_PTS =  0x80
+SEND_PATH_PTS =  0x80 
 
 # Servo Module LOAD_TRAJ control byte bit definitions:
 LOAD_POS =          0x01  # +4 bytes
@@ -49,7 +49,6 @@ VEL_MODE =          0x20  # 1 = velocity mode, 0 = trap. position mode
 REVERSE =           0x40  # 1 = command neg. PWM or vel, 0 = positive
 MOVE_REL =          0x40  # 1 = move relative, 0 = move absolute
 START_NOW =         0x80  # 1 = start now, 0 = wait for START_MOVE command
-
 
 # Servo I/O Control bit flags
 # limit mode flags:
@@ -68,11 +67,9 @@ FASTPATH_MODE =   0x40
 STEP_DIR_MODE =   0x80
 
 
-
 # Compute 8-bit checksum of an array of bytes
 def checksum_8(bytes_arg):
   return sum(bytes_arg)%256
-
 
 
 class NmcModule():
@@ -129,9 +126,7 @@ class NmcModule():
     self.PrintMsg()
 
 
-  def DefineStatusData(self, status_bits):
-    cmd = bytes([self.addr, 0x12, status_bits])
-    self.len_status = 1 + 1
+  def calc_extra_bytes(self,status_bits):
     extra_bytes = 0
     if status_bits & SEND_POS:
       extra_bytes += 4
@@ -149,6 +144,13 @@ class NmcModule():
       extra_bytes += 2
     if status_bits & SEND_PATH_PTS:
       extra_bytes += 1
+    return extra_bytes
+
+
+  def DefineStatusData(self, status_bits):
+    cmd = bytes([self.addr, 0x12, status_bits])
+    self.len_status = 1 + 1
+    extra_bytes = self.calc_extra_bytes(status_bits)
     self.len_status += extra_bytes
     self.SendCmd(cmd, 0 + self.len_status)
     self.cmd_msg = ('DefineStatusData response: %s  Status Bits: 0x%02x\n' % (self.response, status_bits))
@@ -181,6 +183,77 @@ class NmcModule():
     self.device_version = self.status_dict['device_version']
     self.status_dict['pos_error'] = int.from_bytes(self.response[15:17], 'little', signed = True)
     self.status_dict['path_pts'] = int.from_bytes(self.response[17:18], 'little', signed = False)
+
+
+  def ReadStatus(self,status_bits):
+    cmd = bytes([self.addr, 0x13, status_bits])
+    extra_bytes = self.calc_extra_bytes(status_bits)
+    self.SendCmd(cmd, extra_bytes + self.len_status)
+    self.cmd_msg = ('ReadStatus response: %s\n' % (self.response))
+    if self.checksum_error:
+      self.err_msg = ('ReadStatus: Error reading status\n')
+      self.status_dict = None
+      return
+    self.PrintMsg()
+
+    self.status_dict = {}
+
+    byte_start = 1
+    byte_end = 1
+    if status_bits & SEND_POS:
+      extra_bytes = 4
+      byte_end += extra_bytes
+      self.status_dict['pos'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = True)
+      byte_start = byte_end
+
+    if status_bits & SEND_CUR_SENSE:
+      extra_bytes = 1
+      byte_end += extra_bytes
+      self.status_dict['cur_sense'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = False)
+      byte_start = byte_end
+
+    if status_bits & SEND_VEL:
+      extra_bytes = 2
+      byte_end += extra_bytes
+      self.status_dict['vel'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = True)
+      byte_start = byte_end
+
+    if status_bits & SEND_AUX:
+      extra_bytes = 1
+      byte_end += extra_bytes
+      self.status_dict['aux_status'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = False)
+      byte_start = byte_end
+
+    if status_bits & SEND_HOME_POS:
+      extra_bytes = 4
+      byte_end += extra_bytes
+      self.status_dict['home_pos'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = True)
+      byte_start = byte_end
+
+    if status_bits & SEND_DEV_TYPE:
+      extra_bytes = 1
+      byte_end += extra_bytes
+      self.status_dict['device_type'] = nmc_device_dict[int.from_bytes(self.response[byte_start:byte_end], 'little', signed = False)]
+      self.device_type = self.status_dict['device_type']
+      byte_start = byte_end
+
+      extra_bytes = 1
+      byte_end += extra_bytes
+      self.status_dict['device_version'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = False)
+      self.device_version = self.status_dict['device_version']
+      byte_start = byte_end
+
+    if status_bits & SEND_POS_ERR:
+      extra_bytes = 2
+      byte_end += extra_bytes
+      self.status_dict['pos_error'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = True)
+      byte_start = byte_end
+
+    if status_bits & SEND_PATH_PTS:
+      extra_bytes = 1
+      byte_end += extra_bytes
+      self.status_dict['path_pts'] = int.from_bytes(self.response[byte_start:byte_end], 'little', signed = False)
+      byte_start = byte_end
 
 
   def NoOp(self):

@@ -3,6 +3,7 @@
 import socket
 import threading
 import socketserver
+import signal
 import sys
 import tty
 import termios
@@ -18,9 +19,37 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyPicServo import nmccom
 
 
+# Signal handler for shutdown
+def signal_handler(signal, frame):
+  global nmc_net
+  global fd, old_settings
+  termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+  sys.stderr.write('\r\nYou pressed Ctrl+C!\r\n')
+  sys.stderr.write('Scope Server shutting down.\r\n')
+  nmc_net.modules['RA'].ServoStopMotorOff()
+  nmc_net.modules['Dec'].ServoStopMotorOff()
+
+  # Shutdown NMC Network
+  nmc_net.Shutdown()
+
+  sys.exit(0)
+
+
+# Get IP address
+import netifaces as ni
+def get_ip(iface = 'wlan0'):
+  try:
+    ni.ifaddresses(iface)
+    ip = ni.ifaddresses(iface)[ni.AF_INET][0]['addr']
+  except:
+    ip = '127.0.0.1'
+  return ip
+
+
 # Class to get raw characters from terminal input
 class _Getch:
   def __call__(self):
+    global fd, old_settings
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
@@ -69,6 +98,7 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 class scope_server:
 
   def __init__(self, scope_mode = 'REAL_SCOPE'):
+    global nmc_net
     self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
     self.input_running = False
     self.server_running = False
@@ -134,6 +164,12 @@ class scope_server:
       nmc_net.Initialize(['RA','Dec'],baudrate=230400)
       self.ra_mod = nmc_net.modules['RA']
       self.dec_mod = nmc_net.modules['Dec']
+
+      signal.signal(signal.SIGINT, signal_handler)
+      signal.signal(signal.SIGHUP, signal_handler)
+      signal.signal(signal.SIGTERM, signal_handler)
+      signal.signal(signal.SIGQUIT, signal_handler)
+
       self.ra_mod.verbosity = 1
       self.dec_mod.verbosity = 1
       self.servo_sidereal_rate = int(self.sidereal_rate*0.000512*2**16)
@@ -142,6 +178,8 @@ class scope_server:
       self.servo_accel = 4000
       self.motor_current_ra = 0
       self.motor_current_dec = 0
+      self.pos_error_ra = 0
+      self.pos_error_dec = 0
  
       self.ra_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
       self.dec_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
@@ -149,6 +187,9 @@ class scope_server:
       self.dec_mod.ServoSetGain(200, 800, 200, 100, 255, 0, 4000, 1, 0, 1)
       self.ra_mod.ServoSetPos(int(self.pos_ra))
       self.dec_mod.ServoSetPos(int(self.pos_dec))
+
+      self.status_bits_ra = nmccom.SEND_POS | nmccom.SEND_CUR_SENSE | nmccom.SEND_POS_ERR
+      self.status_bits_dec = nmccom.SEND_POS | nmccom.SEND_CUR_SENSE | nmccom.SEND_POS_ERR
 
       # Example nmccom commands
       '''
@@ -203,6 +244,8 @@ class scope_server:
     status_dict['target_ra_pos'] = self.ra_time_array_to_pos(self.target_ra_time_array)
     status_dict['motor_current_ra'] = self.motor_current_ra
     status_dict['motor_current_dec'] = self.motor_current_dec
+    status_dict['pos_error_ra'] = self.pos_error_ra
+    status_dict['pos_error_dec'] = self.pos_error_dec
 
     return status_dict
 
@@ -422,7 +465,11 @@ class scope_server:
           self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
 
       if self.ra_axis_running or self.ra_axis_guiding:
-        self.pos_ra = self.ra_mod.ServoGetPos()
+#        self.pos_ra = self.ra_mod.ServoGetPos()
+        self.ra_mod.ReadStatus(self.status_bits_ra)
+        self.pos_ra = self.ra_mod.status_dict['pos']
+        self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
+        self.pos_error_ra = self.ra_mod.status_dict['pos_error']
         if self.ra_mod.response[0] & 0x01:
           if self.ra_axis_goto:
             self.motion_q.put(['ra_guide_start', None])
@@ -431,13 +478,25 @@ class scope_server:
           self.ra_axis_running = False
           self.ra_axis_guiding = False
           self.ra_axis_goto = False
+          self.ra_mod.ReadStatus(self.status_bits_ra)
+          self.pos_ra = self.ra_mod.status_dict['pos']
+          self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
+          self.pos_error_ra = self.ra_mod.status_dict['pos_error']
 
       if self.dec_axis_running:
-        self.pos_dec = self.dec_mod.ServoGetPos()
+#        self.pos_dec = self.dec_mod.ServoGetPos()
+        self.dec_mod.ReadStatus(self.status_bits_dec)
+        self.pos_dec = self.dec_mod.status_dict['pos']
+        self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
+        self.pos_error_dec = self.dec_mod.status_dict['pos_error']
         if self.dec_mod.response[0] & 0x01:
           # Servo Off
           self.dec_mod.ServoStopMotorOff()
           self.dec_axis_running = False
+          self.dec_mod.ReadStatus(self.status_bits_dec)
+          self.pos_dec = self.dec_mod.status_dict['pos']
+          self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
+          self.pos_error_dec = self.dec_mod.status_dict['pos_error']
 
       self.motion_running = self.ra_axis_running or self.ra_axis_guiding or self.dec_axis_running
       if not cmd == 'motion_continue':
@@ -531,9 +590,13 @@ class scope_server:
   def server_stop(self):
     if self.server_running:
       self.server_running=False
-#      self.socket.shutdown(socket.SHUT_RDWR)
-#      self.socket.close()
       sys.stderr.write('Scope Server shutting down.\r\n')
+
+      # Shutdown NMC Network
+      self.ra_mod.ServoStopMotorOff()
+      self.dec_mod.ServoStopMotorOff()
+      nmc_net.Shutdown()
+
       self.threaded_server.shutdown()
       self.server_thread.join()
 
@@ -554,7 +617,7 @@ class scope_server:
         if self.dec_axis_running:
           self.motion_q.put(['dec_slew_stop', None])
         else:
-          self.motion_q.put(['dec_slew_start', 1])
+          self.motion_q.put(['dec_slew_start', -1])
 #        sys.stderr.write('  moved N to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # S, down arrow
@@ -562,7 +625,7 @@ class scope_server:
         if self.dec_axis_running:
           self.motion_q.put(['dec_slew_stop', None])
         else:
-          self.motion_q.put(['dec_slew_start', -1])
+          self.motion_q.put(['dec_slew_start', 1])
 #        sys.stderr.write('  moved S to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # E, right arrow
@@ -606,6 +669,7 @@ class scope_server:
       elif k=='q':
         self.input_running = False
       else:
+        sys.stderr.write('>>> ' + str(type(k)) + ' \r\n')
         sys.stderr.write('Unknown key! Please type q to quit.\r\n')
     self.server_stop()
 
@@ -619,16 +683,63 @@ class scope_server:
     if cmd == 'get_status':
       response = str(self.get_status())
 
+    elif cmd == 'reset_server':
+      pass
+
     elif cmd == 'shutdown_server':
       self.server_stop()
 
+    elif cmd == 'reboot_system':
+      pass
+
     elif cmd == 'shutdown_system':
       pass
+
+    # Toggle RA axis guiding
+    elif cmd == 'toggle_slew_guide':
+      if not self.ra_axis_guiding:
+        # Start RA axis guiding
+        sys.stderr.write('  Start Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        self.motion_q.put(['ra_guide_start', None])
+        if self.dec_axis_running:
+          self.motion_q.put(['dec_slew_stop', None])
+
+      else:
+        # Stop RA axis guiding
+        self.motion_q.put(['ra_guide_stop', None])
+        if self.dec_axis_running:
+          self.motion_q.put(['dec_slew_stop', None])
+        sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
+    elif cmd == 'toggle_slew_north':
+      if not self.dec_axis_running:
+        self.process_lx200_cmd(':Mn#')
+      else:
+        self.process_lx200_cmd(':Qn#')
+
+    elif cmd == 'toggle_slew_south':
+      if not self.dec_axis_running:
+        self.process_lx200_cmd(':Ms#')
+      else:
+        self.process_lx200_cmd(':Qs#')
+
+    elif cmd == 'toggle_slew_east':
+      if not self.ra_axis_running:
+        self.process_lx200_cmd(':Me#')
+      else:
+        self.process_lx200_cmd(':Qe#')
+
+    elif cmd == 'toggle_slew_west':
+      if not self.ra_axis_running:
+        self.process_lx200_cmd(':Mw#')
+      else:
+        self.process_lx200_cmd(':Qw#')
 
     else:
       pass
 
     return response
+
 
 
   # Process LX200 Telescope Protocol Commands
@@ -799,13 +910,18 @@ class scope_server:
 
 if (__name__ == '__main__'):
 
-  if (len(sys.argv)<3):
-    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
-    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
-    sys.exit()
+#  if (len(sys.argv)<3):
+#    print('\nUsage: %s server_address port\n' % (sys.argv[0]))
+#    print('   Example: %s 10.0.1.15 4030\n' % (sys.argv[0]))
+#    sys.exit()
+#  server_address = sys.argv[1]
+#  port = int(sys.argv[2])
 
-  server_address = sys.argv[1]
-  port = int(sys.argv[2])
+  server_address = get_ip()
+  port = 4030
+
+  print("\nStarting ScopeServer at %s port %d" % (server_address, port))
+
   scope = scope_server()
   scope.server_start(server_address, port)
 

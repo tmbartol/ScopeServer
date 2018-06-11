@@ -47,6 +47,11 @@ button.actionbutton {
                 <th class="displayvalue" id="motor_current_dec"></th>
                 <th class="displayvalue" id="motor_current_ra"></th>
             </tr>
+            <tr>
+                <th class="serverlabel">Pos Error:</th>
+                <th class="displayvalue" id="pos_error_dec"></th>
+                <th class="displayvalue" id="pos_error_ra"></th>
+            </tr>
     </table>
 </div>
 <!--  Scope Slew Controls  -->
@@ -79,6 +84,9 @@ button.actionbutton {
 <div class="fixed">
     <object align="left">
         <button class="btn btn-primary actionbutton" name="reboot" value="reboot">Reboot &raquo;</button>
+    </object>
+    <object align="center">
+        <button class="btn btn-primary actionbutton" name="reset" value="reset">Reset &raquo;</button>
     </object>
     <object align="right">
         <button class="btn btn-warning actionbutton" name="shutdown" value="shutdown">Shutdown &raquo;</button>
