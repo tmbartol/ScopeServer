@@ -60,9 +60,9 @@ def control(request):
   if request.is_ajax():
     result = {}
     slew = request.POST.get("slew")
+    print(slew)
     if slew:
-      mouse = request.POST.get("mouse") == "mousedown"
-      print (slew)
+      mouse = (request.POST.get("mouse") == "mousedown") or (request.POST.get("mouse") == "touchstart")
       if slew == "slew_north":
         if mouse:
           print("Start Slew North")
