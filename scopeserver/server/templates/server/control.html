@@ -10,6 +10,10 @@ button.actionbutton {
     margin: 0px 0px 0px 0px;
 }
 </style>
+<style type="text/css">
+  .dark-background {background-color:#202020;}
+  .red {color:#d00000;}
+</style>
 {% endblock %} {% block body %} {% csrf_token %}
 <!--
 <div class="page-header">
@@ -56,27 +60,26 @@ button.actionbutton {
 </div>
 <!--  Scope Slew Controls  -->
 <div align="center">
-    <button class="btn btn-primary slewbutton" name="slew_north" value="north">
+    <button class="btn btn-primary dark-background red slewbutton" name="slew_north" value="north">
         <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
     </button>
 </div>
 <div align="center">
-    <button class="btn btn-primary slewbutton" name="slew_west" value="west">
+    <button class="btn btn-primary dark-background red slewbutton" name="slew_west" value="west">
         <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
     </button>
-    <button class="btn btn-primary guidebutton" name="slew_guide" value="guide">
+    <button class="btn btn-primary dark-background red guidebutton" name="slew_guide" value="guide">
         <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
     </button>
-    <button class="btn btn-primary slewbutton" name="slew_east" value="east">
+    <button class="btn btn-primary dark-background red slewbutton" name="slew_east" value="east">
         <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
     </button>
 </div>
 <div align="center">
-    <button class="btn btn-primary slewbutton" name="slew_south" value="south">
+    <button class="btn btn-primary dark-background red slewbutton" name="slew_south" value="south">
         <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
     </button>
 </div>
-
 
 <!--  Display ScopeServer Error Message  -->
 <div align="center" style="color:red" id="errorDiv"></div>
@@ -84,13 +87,13 @@ button.actionbutton {
 <!--  Raspberry Pi Reboot/Shutdown Controls  -->
 <div class="fixed">
     <object align="left">
-        <button class="btn btn-primary actionbutton" name="reboot" value="reboot">Reboot &raquo;</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="reboot" value="reboot">Reboot &raquo;</button>
     </object>
     <object align="center">
-        <button class="btn btn-primary actionbutton" name="reset" value="reset">Reset &raquo;</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="reset" value="reset">Reset &raquo;</button>
     </object>
     <object align="right">
-        <button class="btn btn-warning actionbutton" name="shutdown" value="shutdown">Shutdown &raquo;</button>
+        <button class="btn btn-warning dark-background red actionbutton" name="shutdown" value="shutdown">Shutdown &raquo;</button>
     </object>
 </div>
 
@@ -153,18 +156,10 @@ function get_scope_status() {
             },
         });
     }
-    
-    $(".slewbutton").on('touchstart', function(e) { slewSend(e); } );
-    $(".slewbutton").on('click', function(e) { slewSend(e); } );
-
-    $(".slewbutton").on('touchend', function(e) { slewSend(e); } );
-
-    
-    $(".guidebutton").click(function(e){
-        slewSend(e);
-    });
-
-
+    $(".slewbutton").on('touchstart',function(e){e.preventDefault(); slewSend(e);});
+    $(".slewbutton").on('click',function(e){slewSend(e);});
+    $(".slewbutton").on('touchend',function(e){e.preventDefault(); slewSend(e);});
+    $(".guidebutton").click(function(e){slewSend(e);});
 </script>
 
 <script>
@@ -199,6 +194,6 @@ function get_scope_status() {
 </script>
 
 <script>
-  var interval_scope_status = setInterval(get_scope_status, 2000);
+  var interval_scope_status = setInterval(get_scope_status, 200);
 </script>
 {% endblock %}
