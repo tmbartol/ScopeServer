@@ -28,9 +28,9 @@ def get_ip(iface = 'wlan0'):
 def send_scopeserver_cmd(cmd):
 #  HOST, PORT = "0.0.0.0", 4030
 #  HOST, PORT = "10.0.1.14", 4030
-#  HOST, PORT = "192.168.50.5", 4030
+  HOST, PORT = "192.168.50.5", 4030
 #  HOST, PORT = "10.0.1.15", 4030
-  HOST, PORT = "169.254.135.86", 4030
+#  HOST, PORT = "169.254.135.86", 4030
  
 #  HOST = get_ip()
 #  PORT = 4030
