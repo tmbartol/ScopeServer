@@ -15,14 +15,9 @@ button.actionbutton {
   .red {color:#d00000;}
 </style>
 {% endblock %} {% block body %} {% csrf_token %}
-<!--
-<div class="page-header">
-  <h1>ScopeServer Controls</h1>
-</div>
-<br />
--->
 <!--  Status Display  -->
-<div class="well well-sm">
+<!-- <div class="well well-sm"> -->
+<div>
     <table id="scopeinfo" border=1 bordercolor="#ff0000">
         <tr>
             <th class="serverlabel">GPS Loc:</th>
@@ -130,7 +125,6 @@ function get_scope_status() {
 <!--  Slew Control Script   -->
 <script>
     function slewSend(e){
-        debugger
         jQuery.ajax({
             data: {
                 csrfmiddlewaretoken: csrftoken,

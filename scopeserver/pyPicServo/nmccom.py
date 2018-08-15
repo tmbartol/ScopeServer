@@ -21,13 +21,23 @@ nmc_device_dict[2] = 'PIC-I/O'
 nmc_device_dict[3] = 'PIC-STEP'
 
 # Status Byte bit masks
-MOVE_DONE =    0x01
-CKSUM_ERR =    0x02
-PWR_ON =       0x04
-POS_ERR =      0x08
-LIMIT1 =       0x10
-LIMIT2 =       0x20
-HOME_IN_PROG = 0x40
+MOVE_DONE =      0x01
+CKSUM_ERR =      0x02
+OVERCURRENT =    0x04
+POWER_ON =       0x08
+POS_ERR =        0x10
+LIMIT1 =         0x20
+LIMIT2 =         0x40
+HOME_IN_PROG =   0x80
+
+# Servo Module Auxilliary status byte bit definitions
+INDEX =          0x01  # value of the encoder index signal
+POS_WRAP =       0x02  # set when 32 bit position counter wraps around (sticky bit)
+SERVO_ON =       0x04  # set when position servo is operating
+ACCEL_DONE =     0x08  # set when acceleration portion of a move is done
+SLEW_DONE =      0x10  # set when slew portion of a move is done
+SERVO_OVERRUN =  0x20  # set if servo takes longer than the specified servo period to execute
+PATH_MODE =      0x40  # path mode is enabled (v.5)
 
 # Status Data bit masks
 SEND_POS =       0x01
@@ -85,11 +95,13 @@ class NmcModule():
     self.status_data = None
     self.status_dict = None
     self.response = None
-    self.checksum_error = None
     self.bytes_sent = 0
     self.bytes_received = 0
+    self.overcurrent_error = False
+    self.pos_error = False
     self.send_errors = 0
     self.receive_errors = 0
+    self.checksum_error = None
     self.cmd_msg = ''
     self.err_msg = ''
     self.verbosity = 2 # 0: quiet,  1: errors only,  2: error and cmd messages
@@ -262,6 +274,15 @@ class NmcModule():
     self.cmd_msg = ('NoOp response: %s\n' % (self.response))
     if self.checksum_error:
       self.err_msg = ('NoOp: Error sending NoOp\n')
+    self.PrintMsg()
+
+
+  def ClearBits(self):
+    cmd = bytes([self.addr, 0x0B])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ClearBits response: %s\n' % (self.response))
+    if self.checksum_error:
+      self.err_msg = ('ClearBits: Error sending ClearBits\n')
     self.PrintMsg()
 
 
@@ -451,6 +472,12 @@ class NmcModule():
       self.send_errors += 1
       self.nmc_net.send_errors += 1
       sys.stderr.write('>>>>>> Host-to-NMC checksum error reported by module %s at addr 0x%02x\n' % (self.name, mod_addr))
+    if not self.checksum_error:
+      if len(self.response):
+        if (self.response[0] & OVERCURRENT):
+          self.overcurrent_error = True
+        if (self.response[0] & POS_ERR):
+          self.pos_error = True
 
 
   # Check validity of command-response communication

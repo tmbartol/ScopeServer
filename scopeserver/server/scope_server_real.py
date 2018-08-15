@@ -118,8 +118,8 @@ class scope_server:
     self.res_dec = self.worm_gear_dec*self.encoder_res_dec
     self.degree_counts_ra=int(self.res_ra/360)
     self.degree_counts_dec=int(self.res_dec/360)
-    #self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
-    self.pos_ra = 98.99*self.degree_counts_ra  # home RA angle is 98.99 degrees
+    self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
+    #self.pos_ra = 98.99*self.degree_counts_ra  # home RA angle is 98.99 degrees
     self.pos_dec = 0*self.degree_counts_dec  # home Dec angle is 0 degrees
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
@@ -323,6 +323,14 @@ class scope_server:
     secs = 3600.0*float(hh)+60.0*float(mm)+float(ss)
     ra_angle_radians = 2*math.pi*secs/86400.0
     return (ra_angle_radians)
+
+
+  def align_to_target(self):
+    pos_ra = self.ra_time_array_to_pos(self.target_ra_time_array)
+    pos_dec = self.target_dec_pos
+    self.ra_mod.ServoSetPos(int(pos_ra))
+    self.dec_mod.ServoSetPos(int(pos_dec))
+    sys.stderr.write('Aligned servo to target at:  pos_ra: %d   pos_dec: %d\r\n' % (pos_ra, pos_dec))
 
 
   # Start thread to get terminal input
@@ -785,7 +793,9 @@ class scope_server:
       response = '1"Updating Planetary Data# #"'
 
     elif cmd == ':CM#':
-      response = "M31 EX GAL MAG 3.5 SZ178.0'#"
+#      response = "M31 EX GAL MAG 3.5 SZ178.0'#"
+      self.align_to_target()
+      response = "#"
 
     elif cmd == ':RS#':
       self.slew_rate = self.slew_rate_max
