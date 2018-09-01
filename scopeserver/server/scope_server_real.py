@@ -23,9 +23,12 @@ from pyPicServo import nmccom
 def signal_handler(signal, frame):
   global nmc_net
   global fd, old_settings
-  termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-  sys.stderr.write('\r\nYou pressed Ctrl+C!\r\n')
-  sys.stderr.write('Scope Server shutting down.\r\n')
+  try:
+    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+  except:
+    pass
+  sys.stderr.write('\r\nScoperServer caught signal %d\r\n' % (signal))
+  sys.stderr.write('ScopeServer shutting down.\r\n')
   nmc_net.modules['RA'].ServoStopMotorOff()
   nmc_net.modules['Dec'].ServoStopMotorOff()
 
@@ -118,15 +121,45 @@ class scope_server:
     self.res_dec = self.worm_gear_dec*self.encoder_res_dec
     self.degree_counts_ra=int(self.res_ra/360)
     self.degree_counts_dec=int(self.res_dec/360)
-    self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
-    #self.pos_ra = 98.99*self.degree_counts_ra  # home RA angle is 98.99 degrees
+    self.dst = (time.localtime()[8])*3600.0  # Correct for Daylight Savings Time
+
+    try:
+      import gpsd
+      gpsd.connect()
+      lat, lon = gpsd.get_current().position()
+      self.site_latitude = lat
+      self.site_longitude = lon
+      self.gpsd_connected = True
+    except:
+      self.site_latitude = 33.0831
+      self.site_longitude = -117.2455
+      self.gpsd_connected = False
+
+    tropical_year = 365.242190402
+#    self.sidereal_day = 86400*tropical_year/(1.0+tropical_year)
+#    self.sidereal_day = 86400.0/1.002737909350795
+    julian_year = 365.25*86400
+    j2000 = time.mktime((2000, 1, 1, 12, 0, 0, 0, 0, 0)) - time.timezone
+    fc = (time.time() - j2000)/(julian_year*100)
+    self.sidereal_day = 86400.0/(1.002737909350795 + 5.9006e-11*fc - 5.9e-15*fc**2)
+    self.sidereal_rate = self.res_ra/self.sidereal_day
+    orbit_frac = (1 + ((time.time() + time.timezone - time.mktime((2018, 1, 1, 0, 0, 0, 0, 0, 0)))/86400))/tropical_year
+    d = (1 + ((time.time() - time.mktime((2018, 1, 1, 0, 0, 0, 0, 0, 0)))/86400))
+    di = int(d)
+    df = d - di
+    dic = (self.res_ra*di/tropical_year)
+    dfc = df*self.res_ra
+#    horizon_pos = 29*64000 + self.res_ra - ((dic+dfc)%self.res_ra)
+#    horizon_pos = (99.25 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
+    horizon_pos = (98.917 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
+    self.pos_ra = horizon_pos  # set home RA angle at Western horizon
+    #self.pos_ra = 213.5*self.degree_counts_ra  # set home RA angle at Western horizon
+    #self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
+    #self.pos_ra = 180*self.degree_counts_ra  # home RA angle is 98.99 degrees
     self.pos_dec = 0*self.degree_counts_dec  # home Dec angle is 0 degrees
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
-    tropical_year = 365.242190402
-#    self.sidereal_day = 86400*tropical_year/(1.0+tropical_year)
-    self.sidereal_day = 86400.0/1.002737909350795
-    self.sidereal_rate = self.res_ra/self.sidereal_day
+
     self.guide_rate = self.sidereal_rate
     self.delta = 1.0*self.guide_rate
     sys.stderr.write('\n\nGuide rate set to: %.6g  counts per second\n\n' % (self.guide_rate))
@@ -138,17 +171,7 @@ class scope_server:
 
     self.timezone = time.timezone
 
-    try:
-      import gpsd
-      gpsd.connect()
-      lat, lon = gpsd.get_current().position()
-      self.site_latitude = lat
-      self.site_longitude = lon
-    except ImportError:
-      self.site_latitude = 33.0831
-      self.site_longitude = -117.2455
-
-    sys.stderr.write('\nStarting Scope Sever in %s mode\n' % (self.scope_mode))
+    sys.stderr.write('\nStarting ScopeSever in %s mode\n' % (self.scope_mode))
     sys.stderr.write('    Site location set to: Lat: %.9g   Lon: %.9g\n\n' % (self.site_latitude, self.site_longitude))
 
     self.target_ra_pos = 0.0
@@ -204,7 +227,7 @@ class scope_server:
       # Slew RA at fast rate
       self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, 15*self.degree_counts_ra, self.servo_fast_rate, 400, 0)
       self.ra_mod.NoOp()
-      while not self.ra_mod.response[0] & 0x01:
+      while not self.ra_mod.response[0] & nmccom.MOVE_DONE:
         if i%200 == 0:
           self.ra_mod.PrintFullStatusReport()
         self.ra_mod.NoOp()
@@ -217,7 +240,7 @@ class scope_server:
       pos = self.ra_mod.ServoGetPos()
       self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, pos + 360*self.degree_counts_ra, servo_sidereal_rate, 100, 0)
       self.ra_mod.NoOp()
-      while not self.ra_mod.response[0] & 0x01:
+      while not self.ra_mod.response[0] & nmccom.MOVE_DONE:
         if i%200 == 0:
           self.ra_mod.PrintFullStatusReport()
         self.ra_mod.NoOp()
@@ -271,6 +294,8 @@ class scope_server:
     ss = float(ss)
     dec_angle = (dd + (dd_sign*(mm/60.0 + ss/3600.0)))%360.0
     pos = (self.res_dec - (self.res_dec*dec_angle/360.0))%self.res_dec
+    if pos > (self.res_dec/2):
+       pos = pos - self.res_dec
     sys.stderr.write('Target Dec Angle: %s  pos %.9g\r\n' % (dec_angle_str, pos))
     return (pos)
     
@@ -287,8 +312,7 @@ class scope_server:
   # Get RA time position of scope
   def get_ra_time(self):
     # In a moving reference frame with rotation of Earth:
-    dst = 1*3600.0  # Correct for Daylight Savings Time
-    ra_time = time.time() + dst + 86400.0*self.pos_ra/self.res_ra
+    ra_time = time.time() + self.dst + 86400.0*self.pos_ra/self.res_ra
     ra_time_str = time.ctime(ra_time).split()[3]
     return (ra_time_str)
 #    return ('%.2d:%.2d.0' % (ra_hh, ra_mm))
@@ -371,6 +395,7 @@ class scope_server:
         # RA Slew at slew rate
         self.ra_axis_running = True
         # RA Servo On
+        self.ra_mod.ClearBits()
         self.ra_mod.ServoStopMotor()
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.ra_axis_start_pos = self.pos_ra
@@ -387,6 +412,7 @@ class scope_server:
         # Slew RA at sidereal rate
         self.ra_axis_guiding = True
         # Servo On
+        self.ra_mod.ClearBits()
         self.ra_mod.ServoStopMotor()
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.ra_axis_guide_start_pos = self.pos_ra
@@ -402,6 +428,7 @@ class scope_server:
         # Dec Slew at slew rate
         self.dec_axis_running = True
         # Dec Servo On
+        self.dec_mod.ClearBits()
         self.dec_mod.ServoStopMotor()
         self.pos_dec = self.dec_mod.ServoGetPos()
         self.dec_axis_start_pos = self.pos_dec
@@ -439,6 +466,7 @@ class scope_server:
         self.ra_axis_running = True
         self.ra_axis_goto = True
         # RA Servo On
+        self.ra_mod.ClearBits()
         self.ra_mod.ServoStopMotor()
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.ra_axis_start_pos = self.pos_ra
@@ -447,6 +475,7 @@ class scope_server:
         # Dec GOTO Target at goto rate
         self.dec_axis_running = True
         # Dec Servo On
+        self.dec_mod.ClearBits()
         self.dec_mod.ServoStopMotor()
         self.pos_dec = self.dec_mod.ServoGetPos()
         self.dec_axis_start_pos = self.pos_dec
@@ -467,20 +496,11 @@ class scope_server:
 
       if self.ra_axis_goto:
         # Update RA GOTO Target
-        self.pos_ra = self.ra_mod.ServoGetPos()
-        self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
-        if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_pos:
-          self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
-
-      if self.ra_axis_running or self.ra_axis_guiding:
-#        self.pos_ra = self.ra_mod.ServoGetPos()
-        self.ra_mod.ReadStatus(self.status_bits_ra)
-        self.pos_ra = self.ra_mod.status_dict['pos']
-        self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
-        self.pos_error_ra = self.ra_mod.status_dict['pos_error']
-        if self.ra_mod.response[0] & 0x01:
-          if self.ra_axis_goto:
-            self.motion_q.put(['ra_guide_start', None])
+#        if self.ra_mod.overcurrent_error or self.ra_mod.pos_error:
+        if self.ra_mod.overcurrent_error:
+          sys.stderr.write('RA Drive Controller Overcurrent or Position Error!!!\r\n')
+          self.ra_mod.ClearBits()
+#          self.server_stop()
           # Servo Off
           self.ra_mod.ServoStopMotorOff()
           self.ra_axis_running = False
@@ -490,14 +510,53 @@ class scope_server:
           self.pos_ra = self.ra_mod.status_dict['pos']
           self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
           self.pos_error_ra = self.ra_mod.status_dict['pos_error']
+        else:
+          self.pos_ra = self.ra_mod.ServoGetPos()
+          self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
+          if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_pos:
+            self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+
+      if self.ra_axis_running or self.ra_axis_guiding:
+#        self.pos_ra = self.ra_mod.ServoGetPos()
+#        if self.ra_mod.overcurrent_error or self.ra_mod.pos_error:
+        if self.ra_mod.overcurrent_error:
+          sys.stderr.write('RA Drive Controller Overcurrent or Position Error!!!\r\n')
+          self.ra_mod.ClearBits()
+#          self.server_stop()
+          # Servo Off
+          self.ra_mod.ServoStopMotorOff()
+          self.ra_axis_running = False
+          self.ra_axis_guiding = False
+          self.ra_axis_goto = False
+          self.ra_mod.ReadStatus(self.status_bits_ra)
+          self.pos_ra = self.ra_mod.status_dict['pos']
+          self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
+          self.pos_error_ra = self.ra_mod.status_dict['pos_error']
+        else:
+          self.ra_mod.ReadStatus(self.status_bits_ra)
+          self.pos_ra = self.ra_mod.status_dict['pos']
+          self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
+          self.pos_error_ra = self.ra_mod.status_dict['pos_error']
+          if self.ra_mod.response[0] & nmccom.MOVE_DONE:
+            if self.ra_axis_goto:
+              self.motion_q.put(['ra_guide_start', None])
+            # Servo Off
+            self.ra_mod.ServoStopMotorOff()
+            self.ra_axis_running = False
+            self.ra_axis_guiding = False
+            self.ra_axis_goto = False
+            self.ra_mod.ReadStatus(self.status_bits_ra)
+            self.pos_ra = self.ra_mod.status_dict['pos']
+            self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
+            self.pos_error_ra = self.ra_mod.status_dict['pos_error']
 
       if self.dec_axis_running:
 #        self.pos_dec = self.dec_mod.ServoGetPos()
-        self.dec_mod.ReadStatus(self.status_bits_dec)
-        self.pos_dec = self.dec_mod.status_dict['pos']
-        self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
-        self.pos_error_dec = self.dec_mod.status_dict['pos_error']
-        if self.dec_mod.response[0] & 0x01:
+#        if self.dec_mod.overcurrent_error or self.dec_mod.pos_error:
+        if self.dec_mod.overcurrent_error:
+          sys.stderr.write('Dec Drive Controller Overcurrent or Position Error!!!\r\n')
+#          self.server_stop()
+          self.dec_mod.ClearBits()
           # Servo Off
           self.dec_mod.ServoStopMotorOff()
           self.dec_axis_running = False
@@ -505,10 +564,25 @@ class scope_server:
           self.pos_dec = self.dec_mod.status_dict['pos']
           self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
           self.pos_error_dec = self.dec_mod.status_dict['pos_error']
+        else:
+          self.dec_mod.ReadStatus(self.status_bits_dec)
+          self.pos_dec = self.dec_mod.status_dict['pos']
+          self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
+          self.pos_error_dec = self.dec_mod.status_dict['pos_error']
+          if self.dec_mod.response[0] & nmccom.MOVE_DONE:
+            # Servo Off
+            self.dec_mod.ServoStopMotorOff()
+            self.dec_axis_running = False
+            self.dec_mod.ReadStatus(self.status_bits_dec)
+            self.pos_dec = self.dec_mod.status_dict['pos']
+            self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
+            self.pos_error_dec = self.dec_mod.status_dict['pos_error']
 
       self.motion_running = self.ra_axis_running or self.ra_axis_guiding or self.dec_axis_running
       if not cmd == 'motion_continue':
         self.motion_q.task_done()
+
+
 
 ##################
 
@@ -598,7 +672,7 @@ class scope_server:
   def server_stop(self):
     if self.server_running:
       self.server_running=False
-      sys.stderr.write('Scope Server shutting down.\r\n')
+      sys.stderr.write('ScopeServer shutting down.\r\n')
 
       # Shutdown NMC Network
       self.ra_mod.ServoStopMotorOff()
@@ -772,12 +846,14 @@ class scope_server:
     elif cmd[0:3] == ':St':  # Set site latitude:  sDD*MM#
       dd, mm = cmd[3:-1].split('*')
       dd_sign = float(dd[0] + '1')
-      self.site_latitude = float(dd) + dd_sign*float(mm)/60.0
+      if not self.gpsd_connected:
+        self.site_latitude = float(dd) + dd_sign*float(mm)/60.0
       response = '1'
 
     elif cmd[0:3] == ':Sg':  # Set site longitude: DDD*MM#
       ddd, mm = cmd[3:-1].split('*')
-      self.site_longitude = float(ddd) + float(mm)/60.0
+      if not self.gpsd_connected:
+        self.site_longitude = float(ddd) + float(mm)/60.0
       response = '1'
 
     elif cmd[0:3] == ':SG':  # Set UTC offset: sHH.H#
@@ -794,6 +870,10 @@ class scope_server:
 
     elif cmd == ':CM#':
 #      response = "M31 EX GAL MAG 3.5 SZ178.0'#"
+      self.ra_axis_goto = False
+      self.motion_q.put(['ra_slew_stop', None])
+      self.motion_q.put(['dec_slew_stop', None])
+      time.sleep(2)
       self.align_to_target()
       response = "#"
 
@@ -926,6 +1006,14 @@ if (__name__ == '__main__'):
 #    sys.exit()
 #  server_address = sys.argv[1]
 #  port = int(sys.argv[2])
+
+  pid = os.getpid()
+  try:
+    pidfile = open('/var/run/scopeserver_control.pid','w')
+    pidfile.write('%d\n' % (pid))
+    pidfile.close()
+  except:
+    pass
 
   server_address = get_ip()
   port = 4030
