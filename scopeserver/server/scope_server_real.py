@@ -136,6 +136,7 @@ class scope_server:
       self.gpsd_connected = False
 
     tropical_year = 365.242190402
+    sidereal_year = 365.25636
 #    self.sidereal_day = 86400*tropical_year/(1.0+tropical_year)
 #    self.sidereal_day = 86400.0/1.002737909350795
     julian_year = 365.25*86400
@@ -143,15 +144,19 @@ class scope_server:
     fc = (time.time() - j2000)/(julian_year*100)
     self.sidereal_day = 86400.0/(1.002737909350795 + 5.9006e-11*fc - 5.9e-15*fc**2)
     self.sidereal_rate = self.res_ra/self.sidereal_day
-    orbit_frac = (1 + ((time.time() + time.timezone - time.mktime((2018, 1, 1, 0, 0, 0, 0, 0, 0)))/86400))/tropical_year
+#    orbit_frac = (1 + ((time.time() + time.timezone - time.mktime((time.localtime()[0], 1, 1, 0, 0, 0, 0, 0, 0)))/86400))/tropical_year
+    n_orbits = time.time()/(86400*sidereal_year)
+    orbit_frac = n_orbits - math.trunc(n_orbits)
     d = (1 + ((time.time() - time.mktime((2018, 1, 1, 0, 0, 0, 0, 0, 0)))/86400))
     di = int(d)
     df = d - di
     dic = (self.res_ra*di/tropical_year)
     dfc = df*self.res_ra
 #    horizon_pos = 29*64000 + self.res_ra - ((dic+dfc)%self.res_ra)
+#    horizon_pos = (90.0 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
 #    horizon_pos = (99.25 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
-    horizon_pos = (98.917 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
+#    horizon_pos = (98.917 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
+    horizon_pos = (90 + self.site_longitude + 360*(orbit_frac+0.028365))*self.degree_counts_ra
     self.pos_ra = horizon_pos  # set home RA angle at Western horizon
     #self.pos_ra = 213.5*self.degree_counts_ra  # set home RA angle at Western horizon
     #self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
