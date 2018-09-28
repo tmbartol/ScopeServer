@@ -156,7 +156,7 @@ class scope_server:
 #    horizon_pos = (90.0 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
 #    horizon_pos = (99.25 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
 #    horizon_pos = (98.917 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
-    horizon_pos = (90 + self.site_longitude + 360*(orbit_frac+0.028365))*self.degree_counts_ra
+    horizon_pos = (90 + self.site_longitude + 360*(orbit_frac+0.028389))*self.degree_counts_ra
     self.pos_ra = horizon_pos  # set home RA angle at Western horizon
     #self.pos_ra = 213.5*self.degree_counts_ra  # set home RA angle at Western horizon
     #self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
