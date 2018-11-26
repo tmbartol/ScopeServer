@@ -45,8 +45,8 @@ sidereal_day = 86400.0/1.002737909350795
 sidereal_rate = ra_counts/sidereal_day
 servo_sidereal_rate = int(sidereal_rate*0.000512*2**16)
 
-dec_servo_fast_rate = int(2*50000*0.000512*2**16)
-ra_servo_fast_rate = int(2*64000*0.000512*2**16)
+dec_servo_fast_rate = int(1.5*50000*0.000512*2**16)
+ra_servo_fast_rate = int(1.5*64000*0.000512*2**16)
 
 ra_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)
 dec_mod.ServoIOControl(output_mode=nmccom.PH3_MODE)

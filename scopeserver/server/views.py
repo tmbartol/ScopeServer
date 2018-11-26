@@ -148,6 +148,10 @@ def control(request):
         result['#pos_error_dec'] = '%d' % (status_dict['pos_error_dec'])
         result['#pos_error_ra'] = '%d' % (status_dict['pos_error_ra'])
         result['status'] = "Success"
+      elif action == "darv":
+        print("Toggle DARV")
+        response = send_scopeserver_cmd('{toggle_darv}')
+        result['status'] = "Success"
       elif action == "reset":
         print("RESETTING BY BUTTON PRESS")
         time.sleep(1)

@@ -92,7 +92,7 @@ class NmcModule():
     self.device_type = None
     self.device_version = None
     self.len_status = 1 + 1
-    self.status_data = None
+    self.status_bits = 0
     self.status_dict = None
     self.response = None
     self.bytes_sent = 0
@@ -101,7 +101,8 @@ class NmcModule():
     self.pos_error = False
     self.send_errors = 0
     self.receive_errors = 0
-    self.checksum_error = None
+    self.checksum_error = False
+    self.module_error = False
     self.cmd_msg = ''
     self.err_msg = ''
     self.verbosity = 2 # 0: quiet,  1: errors only,  2: error and cmd messages
@@ -111,11 +112,11 @@ class NmcModule():
   def PrintMsg(self):
     if self.verbosity:
       if self.err_msg:
-        sys.stderr.write('>>> NMC Error: Module %s at addr %d:\n    >>> %s' % (self.name, self.addr, self.err_msg))
+        sys.stderr.write('>>> NMC Error: Module %s at addr %d:\r\n    >>> %s' % (self.name, self.addr, self.err_msg))
         self.err_msg = ''
       if self.verbosity == 2:
         if self.cmd_msg:
-          sys.stdout.write('CMD Status: Module %s at addr %d:\n    %s' % (self.name, self.addr, self.cmd_msg))
+          sys.stdout.write('CMD Status: Module %s at addr %d:\r\n    %s' % (self.name, self.addr, self.cmd_msg))
           self.cmd_msg = ''
 
 
@@ -162,14 +163,16 @@ class NmcModule():
   def DefineStatusData(self, status_bits):
     cmd = bytes([self.addr, 0x12, status_bits])
     self.len_status = 1 + 1
+    self.status_bits = status_bits
     extra_bytes = self.calc_extra_bytes(status_bits)
     self.len_status += extra_bytes
     self.SendCmd(cmd, 0 + self.len_status)
     self.cmd_msg = ('DefineStatusData response: %s  Status Bits: 0x%02x\n' % (self.response, status_bits))
     if self.checksum_error:
       self.err_msg = ('DefineStatusData: Error defining status\n')
-    if self.checksum_error == 2:
-      self.len_status = 1 + 1
+      if self.checksum_error == 2:
+        self.status_bits = 0
+        self.len_status = 1 + 1
     self.PrintMsg()
 
 
@@ -184,6 +187,7 @@ class NmcModule():
     self.PrintMsg()
 
     self.status_dict = {}
+    self.status_dict['status'] = int.from_bytes(self.response[0:1], 'little', signed = False)
     self.status_dict['pos'] = int.from_bytes(self.response[1:5], 'little', signed = True)
     self.status_dict['cur_sense'] = int.from_bytes(self.response[5:6], 'little', signed = False)
     self.status_dict['vel'] = int.from_bytes(self.response[6:8], 'little', signed = True)
@@ -209,6 +213,7 @@ class NmcModule():
     self.PrintMsg()
 
     self.status_dict = {}
+    self.status_dict['status'] = int.from_bytes(self.response[0:1], 'little', signed = False)
 
     byte_start = 1
     byte_end = 1
@@ -283,6 +288,9 @@ class NmcModule():
     self.cmd_msg = ('ClearBits response: %s\n' % (self.response))
     if self.checksum_error:
       self.err_msg = ('ClearBits: Error sending ClearBits\n')
+    else:
+      self.overcurrent_error = False
+      self.pos_error = False
     self.PrintMsg()
 
 
@@ -439,45 +447,48 @@ class NmcModule():
 
 
   def PrintFullStatusReport(self):
-    sys.stdout.write('\n')
-    sys.stdout.write('Full Status of NMC module %s at addr %d: \n' % (self.name,self.addr))
+    sys.stdout.write('\r\n')
+    sys.stdout.write('Full Status of NMC module %s at addr %d: \r\n' % (self.name,self.addr))
     self.ReadFullStatus()
     if self.status_dict:
-      sys.stdout.write('             pos:  %d\n' % (self.status_dict['pos']))
-      sys.stdout.write('       cur_sense:  %d\n' % (self.status_dict['cur_sense']))
-      sys.stdout.write('             vel:  %d\n' % (self.status_dict['vel']))
-      sys.stdout.write('      aux_status:  %d\n' % (self.status_dict['aux_status']))
-      sys.stdout.write('        home_pos:  %d\n' % (self.status_dict['home_pos']))
-      sys.stdout.write('     device_type:  %s\n' % (self.status_dict['device_type']))
-      sys.stdout.write('  device_version:  %d\n' % (self.status_dict['device_version']))
-      sys.stdout.write('       pos_error:  %d\n' % (self.status_dict['pos_error']))
-      sys.stdout.write('        path_pts:  %d\n' % (self.status_dict['path_pts']))
-    sys.stdout.write('\n')
+      sys.stdout.write('     status byte:  0x%x\r\n' % (self.status_dict['status']))
+      sys.stdout.write('             pos:  %d\r\n' % (self.status_dict['pos']))
+      sys.stdout.write('       cur_sense:  %d\r\n' % (self.status_dict['cur_sense']))
+      sys.stdout.write('             vel:  %d\r\n' % (self.status_dict['vel']))
+      sys.stdout.write('      aux_status:  0x%x\r\n' % (self.status_dict['aux_status']))
+      sys.stdout.write('        home_pos:  %d\r\n' % (self.status_dict['home_pos']))
+      sys.stdout.write('     device_type:  %s\r\n' % (self.status_dict['device_type']))
+      sys.stdout.write('  device_version:  %d\r\n' % (self.status_dict['device_version']))
+      sys.stdout.write('       pos_error:  %d\r\n' % (self.status_dict['pos_error']))
+      sys.stdout.write('        path_pts:  %d\r\n' % (self.status_dict['path_pts']))
+    sys.stdout.write('\r\n')
     sys.stdout.flush()
 
 
   def SendCmd(self, cmd, len_response):
     full_cmd = bytes([0xAA]) + cmd + bytes([checksum_8(cmd)])
     if self.verbosity == 2:
-      sys.stdout.write('SendCmd Sending Command: %a\n' % (full_cmd))
+      sys.stdout.write('SendCmd Sending Command: %a\r\n' % (full_cmd))
     self.bytes_sent += self.nmc_net.port.write(full_cmd)
     self.response = self.nmc_net.port.read(len_response)
     self.bytes_received += len(self.response)
     self.CheckResponse()
-    if self.checksum_error == 1:
+    if not self.checksum_error:
+      if (self.response[0] & OVERCURRENT):
+        sys.stderr.write('>>>>>> Overcurrent error reported by module %s at addr 0x%02x\r\n' % (self.name, self.addr))
+        self.overcurrent_error = True
+#      if len(self.response) > 2:
+#        if (self.response[0] & POS_ERR) & (self.response[1] & SERVO_ON):
+#          sys.stderr.write('>>>>>> Position error reported by module %s at addr 0x%02x\r\n' % (self.name, self.addr))
+#          self.pos_error = True
+    elif self.checksum_error == 1:
       self.receive_errors += 1
       self.nmc_net.receive_errors += 1
-    if self.checksum_error == 2:
-      mod_addr = int.from_bytes(cmd[1:2], 'little', signed = False)
+    elif self.checksum_error == 2:
       self.send_errors += 1
       self.nmc_net.send_errors += 1
-      sys.stderr.write('>>>>>> Host-to-NMC checksum error reported by module %s at addr 0x%02x\n' % (self.name, mod_addr))
-    if not self.checksum_error:
-      if len(self.response):
-        if (self.response[0] & OVERCURRENT):
-          self.overcurrent_error = True
-        if (self.response[0] & POS_ERR):
-          self.pos_error = True
+      sys.stderr.write('>>>>>> Send Host-to-NMC checksum error reported by module %s at addr 0x%02x\r\n' % (self.name, self.addr))
+    self.module_error = self.checksum_error | self.overcurrent_error
 
 
   # Check validity of command-response communication
@@ -486,12 +497,14 @@ class NmcModule():
     if len(self.response):
       # if we have a response then check if received response is valid
       if checksum_8(self.response[:-1]) != self.response[-1]:
+        sys.stderr.write('>>>>>> Receive checksum reported by module %s at addr 0x%02x\r\n' % (self.name, self.addr))
         self.checksum_error = 1
         return
       # if response OK then check if previously sent command was received correctly
       self.checksum_error = (self.response[0] & CKSUM_ERR)
       return
     else:
+      sys.stderr.write('>>>>>> Invalid empty response reported by module %s at addr 0x%02x\r\n' % (self.name, self.addr))
       self.checksum_error = 1
       return
 
@@ -609,7 +622,6 @@ class NmcNet():
     self.port.write(full_cmd)
     response = self.port.read(2)
     time.sleep(0.002)
-#    self.SendCmd(cmd, 2)
     print('NmcNet: SimpleReset')
 
 
