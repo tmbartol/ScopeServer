@@ -27,9 +27,11 @@ button.actionbutton {
         <tr>
             <th class="serverlabel">Local Time</th>
             <th class="displayvalue" id="local_time"></th>
+            <th class="displayvalue" id="t_acc"></th>
             <tr>
                 <th class="serverlabel">UTC Time</th>
                 <th class="displayvalue" id="utc_time"></th>
+                <th class="displayvalue" id="meridian_mode"></th>
             </tr>
             <tr>
                 <th class="serverlabel">Scope Pos:</th>
@@ -82,16 +84,22 @@ button.actionbutton {
 <!--  Raspberry Pi Reboot/Shutdown Controls,  Scope DARV control  -->
 <div class="fixed">
     <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="reboot" value="reboot">Reboot &raquo;</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">G RST</button>
     </object>
-    <object align="center">
-        <button class="btn btn-primary dark-background red actionbutton" name="reset" value="reset">Reset &raquo;</button>
+    <object align="left">
+        <button class="btn btn-primary dark-background red actionbutton" name="ssreset" value="ssreset">S RST</button>
     </object>
-    <object align="center">
-        <button class="btn btn-primary dark-background red actionbutton" name="darv" value="darv">DARV &raquo;</button>
+    <object align="left">
+        <button class="btn btn-primary dark-background red actionbutton" name="reboot" value="reboot">Reboot</button>
+    </object>
+    <object align="left">
+        <button class="btn btn-warning dark-background red actionbutton" name="shutdown" value="shutdown">Shutdwn</button>
     </object>
     <object align="right">
-        <button class="btn btn-warning dark-background red actionbutton" name="shutdown" value="shutdown">Shutdown &raquo;</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="meridianflip" value="meridianflip">MFLP</button>
+    </object>
+    <object align="right">
+        <button class="btn btn-primary dark-background red actionbutton" name="darv" value="darv">DARV</button>
     </object>
 </div>
 
@@ -191,6 +199,6 @@ function get_scope_status() {
 </script>
 
 <script>
-  var interval_scope_status = setInterval(get_scope_status, 200);
+  var interval_scope_status = setInterval(get_scope_status, 500);
 </script>
 {% endblock %}

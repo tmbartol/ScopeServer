@@ -18,6 +18,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_ROOT = os.path.join(BASE_DIR, "static")
 print(BASE_DIR)
 
+# Disable logging
+LOGGING_CONFIG = None
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/1.10/howto/deployment/checklist/
 
@@ -28,7 +31,7 @@ SECRET_KEY = '89b4!6^z2$&5wql-bry9%*sec#!ryo=o@02)fh_!1s0_g%-n&c'
 DEBUG = True
 
 
-ALLOWED_HOSTS = ["169.254.135.86", "lucia.dhcp.snl.salk.edu","10.0.1.13","10.0.1.14","10.0.1.15","10.0.1.21","10.0.71.43","192.168.50.5","192.168.0.1","192.168.0.13","127.0.0.1","localhost","0.0.0.0"]
+ALLOWED_HOSTS = ["169.254.135.86", "lucia.dhcp.snl.salk.edu","10.0.1.13","10.0.1.14","10.0.1.15","10.0.1.19","10.0.1.20","10.0.1.21","10.0.71.43","192.168.50.5","192.168.0.1","192.168.0.13","127.0.0.1","localhost","0.0.0.0"]
 
 
 # Application definition

@@ -33,7 +33,7 @@ def send_scopeserver_cmd(cmd):
 #  HOST, PORT = "169.254.135.86", 4030
  
   HOST = get_ip()
-  PORT = 4030
+  PORT = 54030
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -137,8 +137,16 @@ def control(request):
         status_dict = eval(scope_status)
         result['#gps_location_lat'] = status_dict['site_latitude']
         result['#gps_location_lon'] = status_dict['site_longitude']
-        result['#local_time'] = status_dict['site_local_time'][:-5]
-        result['#utc_time'] = status_dict['site_utc_time'][:-5]
+        lt = status_dict['site_local_time']
+        lt1 = lt[:-6]
+        lt2 = str(round(float(lt[-7:])*2)/2)[-1]
+        result['#local_time'] = lt1+lt2
+        ut = status_dict['site_utc_time']
+        ut1 = ut[:-6]
+        ut2 = str(round(float(ut[-7:])*2)/2)[-1]
+        result['#utc_time'] = ut1+ut2
+        result['#t_acc'] = 't_acc:  %.4gus  :  %.4gus' % (1000*status_dict['t_offset'], 1000*status_dict['t_jitter'])
+        result['#meridian_mode'] = 'mflp:  %d' % (status_dict['meridian_mode'])
         result['#scope_position_dec'] = '%s (%d)' % (status_dict['dec_angle'], status_dict['dec_pos'])
         result['#scope_position_ra'] = '%s (%d)' % (status_dict['ra_time'], status_dict['ra_pos'])
         result['#target_position_dec'] = '%s (%d)' % (status_dict['target_dec_angle'], status_dict['target_dec_pos'])
@@ -152,10 +160,18 @@ def control(request):
         print("Toggle DARV")
         response = send_scopeserver_cmd('{toggle_darv}')
         result['status'] = "Success"
-      elif action == "reset":
-        print("RESETTING BY BUTTON PRESS")
+      elif action == "meridianflip":
+        print("Meridian Flip")
+        response = send_scopeserver_cmd('{meridian_flip}')
+        result['status'] = "Success"
+      elif action == "gpsreset":
+        print("RESETTING GPS BY BUTTON PRESS")
         time.sleep(1)
-        os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_control_reset.sh &')
+        os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_control_gpsreset.sh &')
+      elif action == "ssreset":
+        print("RESETTING SCOPE SERVER BY BUTTON PRESS")
+        time.sleep(1)
+        os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_control_ssreset.sh &')
       elif action == "reboot":
         print("REBOOTING BY BUTTON PRESS")
         time.sleep(1)
