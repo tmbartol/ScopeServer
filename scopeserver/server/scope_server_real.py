@@ -125,7 +125,10 @@ class scope_server:
     self.server_running = False
     self.motion_q = queue.Queue(maxsize=0)
     self.motion_running = False
-    self.auto_guider_connected = False
+    self.autoguider_connected = False
+#    self.autoguider_host = '192.168.50.160'
+    self.autoguider_host = '10.0.1.23'
+    self.autoguider_port = 54040
     self.ra_axis_running = False
     self.dec_axis_running = False
     self.ra_axis_goto = False
@@ -211,6 +214,7 @@ class scope_server:
     self.timezone = time.timezone
 
     sys.stderr.write('\nStarting ScopeSever in %s mode\n' % (self.scope_mode))
+    sys.stderr.write('    GPS Fix: %s\n' % (str(self.gpsd_connected)))
     sys.stderr.write('    Site location set to: Lat: %.9g   Lon: %.9g\n\n' % (self.site_latitude, self.site_longitude))
 
     self.target_ra_pos = 0.0
@@ -319,7 +323,7 @@ class scope_server:
     status_dict['site_utc_time'] = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')
 
     if not self.update_counter%20:
-      self.t_offset, self.t_jitter = [ float(item) for item in subprocess.check_output(['ntpq -p'],shell=True).decode('ascii').splitlines()[3].split()[8:] ]
+      self.t_offset, self.t_jitter = [ float(item) for item in subprocess.check_output(['ntpq -p'],shell=True).decode('ascii').splitlines()[2].split()[8:] ]
     self.update_counter += 1
 
     status_dict['t_offset'] = self.t_offset
@@ -455,32 +459,43 @@ class scope_server:
 # Motion Control Methods
 ###########################
 
-  def auto_guider_latency_test(self):
-    HOST, PORT = '10.0.1.23', 54040
-    t0 = time.time()
-    cmd = '{get_auto_guider_time %s}' % (str(t0))
+  def autoguider_latency_test(self):
+    HOST = self.autoguider_host
+    PORT = self.autoguider_port
 
-    # Create a socket (SOCK_STREAM means a TCP socket)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-      # Connect to server and send cmd
-      sock.connect((HOST, PORT))
-      sock.sendall(bytes(cmd, "utf-8"))
+    cmd_template = '{get_autoguider_time %s}'
 
-      # Receive response from the server and finish
-      response = str(sock.recv(1024), "utf-8")
-      t2 = time.time()
+    dt_array = np.empty((0),'int64')
+    t_diff_array = np.empty((0),'int64')
 
-#    sys.stderr.write('\r\nAuto Guider Sent:     %s\r\n' % (response))
-#    sys.stderr.write('Auto Guider Received: %s\r\n' % (response))
+    n = 50
+    for i in range(n):
+      # Create a socket (SOCK_STREAM means a TCP socket)
+      with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # Connect to server and send cmd
+        sock.connect((HOST, PORT))
+        t0 = time.time_ns()
+        cmd = cmd_template % (str(t0))
+        sock.sendall(bytes(cmd, "utf-8"))
 
-    if response.split()[0] == 'auto_guider_time':
-      t_ag = float(response.split()[1])
-      sys.stderr.write('\r\nt0: %.15g\r\n' % (t0))
-      sys.stderr.write('t_ag: %.15g (+%.15g)\r\n' % (t_ag, t_ag - t0))
-      sys.stderr.write('t2: %.15g (+%.15g) (+%.15g)\r\n' % (t2, t2 - t_ag, t2 - t0))
-    else:
-      sys.stderr.write('\r\nunknown response from auto_guider %s\r\n' % (response))
+        # Receive response from the server and finish
+        response = str(sock.recv(1024), "utf-8")
+        t2 = time.time_ns()
+
+      if response.split()[0] == 'autoguider_time':
+        t_ag = int(response.split()[1])
+        dt = t2 - t0
+        t_diff = (t_ag - dt/2) - t0
+        dt_array = np.append(dt_array,dt)
+        t_diff_array = np.append(t_diff_array,t_diff)
+      else:
+        sys.stderr.write('\r\nunknown response from autoguider %s\r\n' % (response))
       
+    dt = dt_array*1e-9
+    t_diff = t_diff_array*1e-9
+    sys.stderr.write('\r\ndt = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (dt.mean(),dt.min(),dt.max(),dt.std()))
+    sys.stderr.write('t_diff = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (t_diff.mean(),t_diff.min(),t_diff.max(),t_diff.std()))
+
 
   # Start thread for motion control
   def motion_control_start(self):
@@ -490,7 +505,7 @@ class scope_server:
 
 
   def motion_control(self):
-    sys.stderr.write('motion_control: thread starting...\r\n')
+    sys.stderr.write('\r\nmotion_control: thread starting...\r\n')
     while True:
       if self.motion_running:
         # if in motion get motion command but do not wait if queue is empty
@@ -505,8 +520,8 @@ class scope_server:
 
       cmd = motion_cmd[0]
       cmd_arg = motion_cmd[1]
-      if cmd == 'auto_guider_latency_test':
-        self.auto_guider_latency_test()
+      if cmd == 'autoguider_latency_test':
+        self.autoguider_latency_test()
       elif cmd == 'jog_pos':
         jog_ra = cmd_arg[0]
         jog_dec = cmd_arg[1]
@@ -859,7 +874,7 @@ class scope_server:
     # Exit the server thread when the main thread terminates
     self.server_thread.daemon = True
     self.server_thread.start()
-    sys.stderr.write('Waiting for a connection, type q to quit...\r\n')
+    sys.stderr.write('\r\nWaiting for a command, type q to quit...\r\n')
     self.server_thread.join()
 
 
@@ -952,15 +967,15 @@ class scope_server:
         self.motion_q.put(('update_pos', True))
 #        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
-      # Report Position
+      # Autoguider Latency Test
       elif k=='t':
-        self.motion_q.put(('auto_guider_latency_test', None))
+        self.motion_q.put(('autoguider_latency_test', None))
 
       # Shutdown the server
       elif k=='q':
         self.input_running = False
       else:
-        sys.stderr.write('>>> ' + str(type(k)) + ' \r\n')
+        sys.stderr.write('>>> ' + str(k) + ' \r\n')
         sys.stderr.write('Unknown key! Please type q to quit.\r\n')
     self.server_stop()
 
@@ -981,9 +996,15 @@ class scope_server:
       response = '@%s: jogging: %d %d' % (str(time.time()), jog_ra, jog_dec)
 #      self.motion_q.put(('jog_pos', (jog_ra, jog_dec)))
 
-    elif cmd == 'auto_guider_connect':
-      self.auto_guider_connected = True
-      response = 'auto_guider_connected'
+    elif cmd == 'autoguider_connect':
+      self.autoguider_connected = True
+      response = 'autoguider_connected'
+      sys.stderr.write('Autoguider Connected\r\n')
+
+    elif cmd == 'get_scopeserver_time':
+      self.autoguider_connected = True
+      response = 'scopeserver_time %s' % (str(time.time_ns()))
+#      sys.stderr.write('Current Time:  %s\r\n' % (time.strftime('%a %b %d %H:%M:%S %Z %Y')))
 
     elif cmd == 'get_status':
       response = str(self.get_status())
