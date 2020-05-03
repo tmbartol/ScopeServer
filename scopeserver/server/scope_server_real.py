@@ -118,17 +118,23 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class scope_server:
 
-  def __init__(self, scope_mode = 'REAL_SCOPE'):
+  def __init__(self, server_address, port, scope_mode = 'REAL_SCOPE'):
     global nmc_net
     self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
     self.input_running = False
     self.server_running = False
     self.motion_q = queue.Queue(maxsize=0)
     self.motion_running = False
-    self.autoguider_connected = False
-#    self.autoguider_host = '192.168.50.160'
-    self.autoguider_host = '10.0.1.23'
+
+    self.scopeserver_host = server_address
+    self.scopeserver_port = port
+    host_dict = {}
+    host_dict['10.0.1.20'] = '10.0.1.23'
+    host_dict['192.168.50.5'] = '192.168.50.10'
+    self.autoguider_host = host_dict[self.scopeserver_host]
     self.autoguider_port = 54040
+    self.autoguider_connected = False
+
     self.ra_axis_running = False
     self.dec_axis_running = False
     self.ra_axis_goto = False
@@ -860,13 +866,13 @@ class scope_server:
 ######################################
 
   # Start server thread 
-  def server_start(self,server_address,port):
+  def server_start(self):
     self.input_start()
     self.motion_control_start()
 #    self.ntpq_start()
     self.server_running = True
 
-    self.threaded_server = ThreadedTCPServer((server_address, port), ThreadedTCPRequestHandler)
+    self.threaded_server = ThreadedTCPServer((self.scopeserver_host, self.scopeserver_port), ThreadedTCPRequestHandler)
 
     # Start a thread with the server -- that thread will then start one
     # more thread for each request
@@ -875,6 +881,16 @@ class scope_server:
     self.server_thread.daemon = True
     self.server_thread.start()
     sys.stderr.write('\r\nWaiting for a command, type q to quit...\r\n')
+    sys.stderr.write('  h      -> print this help message\r\n')
+    sys.stderr.write('  arrows -> slew N S E W\r\n')
+    sys.stderr.write('  g      -> begin tracking\r\n')
+    sys.stderr.write('  s      -> stop tracking\r\n')
+    sys.stderr.write('  d      -> drift alignment routine DARV\r\n')
+    sys.stderr.write('  p      -> report position\r\n')
+    sys.stderr.write('  t      -> autoguider latency test\r\n')
+    sys.stderr.write('  q      -> quit and shutdown ScopeServer\r\n\r\n')
+
+
     self.server_thread.join()
 
 
@@ -974,9 +990,29 @@ class scope_server:
       # Shutdown the server
       elif k=='q':
         self.input_running = False
+
+      # Print help message
+      elif k=='h':
+        sys.stderr.write('\r\n>>> ' + str(k) + '\r\n')
+        sys.stderr.write('  h      -> print this help message\r\n')
+        sys.stderr.write('  arrows -> slew N S E W\r\n')
+        sys.stderr.write('  g      -> begin tracking\r\n')
+        sys.stderr.write('  s      -> stop tracking\r\n')
+        sys.stderr.write('  d      -> drift alignment routine DARV\r\n')
+        sys.stderr.write('  p      -> report position\r\n')
+        sys.stderr.write('  t      -> autoguider latency test\r\n')
+        sys.stderr.write('  q      -> quit and shutdown ScopeServer\r\n\r\n')
       else:
         sys.stderr.write('>>> ' + str(k) + ' \r\n')
         sys.stderr.write('Unknown key! Please type q to quit.\r\n')
+        sys.stderr.write('  h      -> print this help message\r\n')
+        sys.stderr.write('  arrows -> slew N S E W\r\n')
+        sys.stderr.write('  g      -> begin tracking\r\n')
+        sys.stderr.write('  s      -> stop tracking\r\n')
+        sys.stderr.write('  d      -> drift alignment routine DARV\r\n')
+        sys.stderr.write('  p      -> report position\r\n')
+        sys.stderr.write('  t      -> autoguider latency test\r\n')
+        sys.stderr.write('  q      -> quit and shutdown ScopeServer\r\n\r\n')
     self.server_stop()
 
 
@@ -1247,8 +1283,8 @@ if (__name__ == '__main__'):
   server_address = get_ip()
   port = 54030
 
-  print("\nStarting ScopeServer at %s port %d" % (server_address, port))
+  print("\nStarting ScopeServer at %s:%d" % (server_address, port))
 
-  scope = scope_server()
-  scope.server_start(server_address, port)
+  scope = scope_server(server_address, port)
+  scope.server_start()
 
