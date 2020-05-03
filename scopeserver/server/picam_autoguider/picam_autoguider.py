@@ -35,7 +35,6 @@ def signal_handler(signal, frame):
   sys.exit(0)
 
 
-'''
 # Get IP address
 import netifaces as ni
 def get_ip(iface = 'wlan0'):
@@ -45,7 +44,6 @@ def get_ip(iface = 'wlan0'):
   except:
     ip = '127.0.0.1'
   return ip
-'''
 
 
 # Class to get raw characters from terminal input
@@ -76,7 +74,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
           cmd = data.decode('ascii').strip()
           if cmd:
             if cmd[0] == '{':
-              response = ag.process_auto_guider_cmd(cmd)
+              response = ag.process_autoguider_cmd(cmd)
             if response:
               # Send response to client
 #              sys.stderr.write('Server responding:  %s\r\n' % (response.encode('ascii')))
@@ -96,28 +94,39 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 
-class auto_guider:
+class autoguider:
 
-  def __init__(self):
+  def __init__(self, server_address, port):
     self.input_running = False
     self.server_running = False
     self.capture_continuous = False
-    self.auto_guider_q = queue.Queue(maxsize=0)
-    self.auto_guider_running = False
+    self.autoguider_q = queue.Queue(maxsize=0)
+    self.autoguider_running = False
+
+    self.autoguider_host = server_address
+    self.autoguider_port = port
+    host_dict = {}
+    host_dict['10.0.1.23'] = '10.0.1.20'
+    host_dict['192.168.50.10'] = '192.168.50.5'
+    self.scopeserver_host = host_dict[self.autoguider_host]
+    self.scopeserver_port = 54030
+
     self.init_cam()
 
 
   # Start server thread
-  def server_start(self,server_address,port):
-    sys.stderr.write('\r\nConnecting to ScopeServer...\r\n')
-#    self.scopeserver_connected = self.scopeserver_connect()
-    self.scopeserver_connected = False
+  def server_start(self):
+    sys.stderr.write('\r\nConnecting to ScopeServer at %s:%d ...\r\n' %(self.scopeserver_host,self.scopeserver_port))
+    self.scopeserver_connected = self.scopeserver_connect()
+#    self.scopeserver_connected = False
 
     self.input_start()
-    self.auto_guider_control_start()
+    self.autoguider_control_start()
     self.server_running = True
 
-    self.threaded_server = ThreadedTCPServer((server_address, port), ThreadedTCPRequestHandler)
+    self.autoguider_q.put(('sync_time', None))
+
+    self.threaded_server = ThreadedTCPServer((self.autoguider_host, self.autoguider_port), ThreadedTCPRequestHandler)
 
     # Start a thread with the server -- that thread will then start one
     # more thread for each request
@@ -125,7 +134,14 @@ class auto_guider:
     # Exit the server thread when the main thread terminates
     self.server_thread.daemon = True
     self.server_thread.start()
-    sys.stderr.write('Waiting for a connection, type q to quit...\r\n')
+    sys.stderr.write('\r\nWaiting for a command, type q to quit...\r\n')
+    sys.stderr.write('  h -> print this help message\r\n')
+    sys.stderr.write('  c -> capture one image\r\n')
+    sys.stderr.write('  g -> begin capture continuous\r\n')
+    sys.stderr.write('  s -> stop capture continuous\r\n')
+    sys.stderr.write('  t -> synchronize time with ScopeServer\r\n')
+    sys.stderr.write('  q -> quit and shutdown Autoguider\r\n\r\n')
+
 
     self.server_thread.join()
 
@@ -149,45 +165,52 @@ class auto_guider:
     self.thread_get_input.start()
 
 
-  # Start thread for auto_guider control
-  def auto_guider_control_start(self):
-    self.thread_auto_guider_control = threading.Thread(target=self.auto_guider_control)
-    self.thread_auto_guider_control.setDaemon(1)
-    self.thread_auto_guider_control.start()
+  # Start thread for autoguider control
+  def autoguider_control_start(self):
+    self.thread_autoguider_control = threading.Thread(target=self.autoguider_control)
+    self.thread_autoguider_control.setDaemon(1)
+    self.thread_autoguider_control.start()
 
 
-  def auto_guider_control(self):
-    sys.stderr.write('auto_guider_control: thread starting...\r\n')
+  def autoguider_control(self):
+    sys.stderr.write('\r\nautoguider_control: thread starting...\r\n')
     while True:
-      if self.auto_guider_running:
-        # if auto_guiding in progress get next auto_guiding command but do not wait if queue is empty
+      if self.autoguider_running:
+        # if autoguiding in progress get next autoguiding command but do not wait if queue is empty
         try:
-          auto_guider_cmd = self.auto_guider_q.get_nowait()
+          autoguider_cmd = self.autoguider_q.get_nowait()
         except queue.Empty:
-          auto_guider_cmd = ('auto_guider_continue', None)
+          autoguider_cmd = ('autoguider_continue', None)
       else:
-        # if not auto_guiding wait to receive auto_guiding command
-#        sys.stderr.write('auto_guiding_control: idle, waiting for command\r\n')
-        auto_guider_cmd = self.auto_guider_q.get()
+        # if not autoguiding wait to receive autoguiding command
+#        sys.stderr.write('autoguiding_control: idle, waiting for command\r\n')
+        autoguider_cmd = self.autoguider_q.get()
 
-      cmd = auto_guider_cmd[0]
-      cmd_arg = auto_guider_cmd[1]
+      cmd = autoguider_cmd[0]
+      cmd_arg = autoguider_cmd[1]
+
       if cmd == 'jog_pos':
         pass
-      elif cmd == 'auto_guider_continue':
+
+      elif cmd == 'autoguider_continue':
         pass
+
       if cmd == 'capture_one':
         self.nightshot()
         if (self.capture_continuous):
-          self.auto_guider_q.put(('capture_one', None))
+          self.autoguider_q.put(('capture_one', None))
 
-      if not cmd == 'auto_guider_continue':
-        self.auto_guider_q.task_done()
+      if cmd == 'sync_time':
+        self.sync_time()
+
+      if not cmd == 'autoguider_continue':
+        self.autoguider_q.task_done()
 
 
   def scopeserver_connect(self):
-    HOST, PORT = '10.0.1.20', 54030
-    cmd = '{auto_guider_connect}'
+    HOST = self.scopeserver_host
+    PORT = self.scopeserver_port
+    cmd = '{autoguider_connect}'
 
     # Create a socket (SOCK_STREAM means a TCP socket)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -198,12 +221,14 @@ class auto_guider:
       # Receive response from the server and finish
       response = str(sock.recv(1024), "utf-8")
 
-    sys.stderr.write('\r\nAuto Guider Sent:     %s\r\n' % (response))
-    sys.stderr.write('Auto Guider Received: %s\r\n' % (response))
-    if response == 'auto_guider_connected':
+#    sys.stderr.write('\r\nAuto Guider Sent:     %s\r\n' % (response))
+#    sys.stderr.write('Auto Guider Received: %s\r\n' % (response))
+    if response == 'autoguider_connected':
       self.scopeserver_connected = True
+      sys.stderr.write('ScopeServer Connected\r\n')
     else:
       self.scopeserver_connected = False
+      sys.stderr.write('ScopeServer Not Connected\r\n')
 
 
 
@@ -221,21 +246,21 @@ class auto_guider:
       # N, North, up arrow
       if k=='\x1b[A':
         if self.dec_axis_running:
-          self.auto_guider_q.put(('dec_slew_stop', None))
+          self.autoguider_q.put(('dec_slew_stop', None))
         else:
-          self.auto_guider_q.put(('dec_slew_start', -1))
+          self.autoguider_q.put(('dec_slew_start', -1))
 #        sys.stderr.write('  moved N to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # c, capture one image
       elif k=='c':
         if (self.capture_continuous == False):
-          self.auto_guider_q.put(('capture_one', None))
+          self.autoguider_q.put(('capture_one', None))
 
       # g, begin capture continuously
       elif k=='g':
         if (self.capture_continuous == False):
           self.capture_continuous = True
-          self.auto_guider_q.put(('capture_one', None))
+          self.autoguider_q.put(('capture_one', None))
 
       # s, stop capture continuously
       elif k=='s':
@@ -243,28 +268,48 @@ class auto_guider:
 
       # Report Position
       elif k=='p':
-        self.auto_guider_q.put(('update_pos', True))
+        self.autoguider_q.put(('update_pos', True))
 #        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+
+      # Synchronize time with ScopeServer
+      elif k=='t':
+        self.autoguider_q.put(('sync_time', None))
 
       # Shutdown the server
       elif k=='q':
         self.input_running = False
+
+      # Print help message
+      elif k=='h':
+        sys.stderr.write('\r\n>>> ' + str(k) + '\r\n')
+        sys.stderr.write('   h -> print this help message\r\n')
+        sys.stderr.write('   c -> capture one image\r\n')
+        sys.stderr.write('   g -> begin capture continuous\r\n')
+        sys.stderr.write('   s -> stop capture continuous\r\n')
+        sys.stderr.write('   t -> synchronize time with ScopeServer\r\n')
+        sys.stderr.write('   q -> quit and shutdown Autoguider\r\n')
       else:
-        sys.stderr.write('>>> ' + str(type(k)) + ' \r\n')
+        sys.stderr.write('>>> ' + str(k) + ' \r\n')
         sys.stderr.write('Unknown key! Please type q to quit.\r\n')
+        sys.stderr.write('   h -> print this help message\r\n')
+        sys.stderr.write('   c -> capture one image\r\n')
+        sys.stderr.write('   g -> begin capture continuous\r\n')
+        sys.stderr.write('   s -> stop capture continuous\r\n')
+        sys.stderr.write('   t -> synchronize time with ScopeServer\r\n')
+        sys.stderr.write('   q -> quit and shutdown Autoguider\r\n')
     self.server_stop()
 
 
   # Process BlueShift Telescope Auto_Guider Protocol Commands
-  def process_auto_guider_cmd(self,cmd):
+  def process_autoguider_cmd(self,cmd):
 
     response = None
 
     cmd = cmd[1:-1]
 
-    if cmd.split()[0] == 'get_auto_guider_time':
-      response = 'auto_guider_time %s' % (str(time.time()))
-#      self.auto_guider_q.put(('jog_pos', (jog_ra, jog_dec)))
+    if cmd.split()[0] == 'get_autoguider_time':
+      response = 'autoguider_time %s' % (str(time.time_ns()))
+#      self.autoguider_q.put(('jog_pos', (jog_ra, jog_dec)))
 
     elif cmd == 'get_status':
       response = str(self.get_status())
@@ -335,6 +380,73 @@ class auto_guider:
     #self.cam.capture_sequence(['./images/image%02d.jpg' % i for i in range(5)],quality=25)
 
 
+  '''
+  def sync_time(self):
+    HOST = self.scopeserver_host
+    PORT = self.scopeserver_port
+    cmd = '{get_scopeserver_time}'
+
+    # Create a socket (SOCK_STREAM means a TCP socket)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+      # Connect to server and send cmd
+      sock.connect((HOST, PORT))
+      sock.sendall(bytes(cmd, "utf-8"))
+    
+      # Receive response from the server and finish
+      response = str(sock.recv(1024), "utf-8")
+
+    if response.split()[0] == 'scopeserver_time':
+      t_ss = int(response.split()[1])
+      time.clock_settime_ns(time.CLOCK_REALTIME,t_ss)
+      sys.stderr.write('Time Synchronized: %d\r\n' % (t_ss))
+      sys.stderr.write('Current Time:  %s\r\n' % (time.strftime('%a %b %d %H:%M:%S %Z %Y')))
+    else:
+      self.scopeserver_connected = False
+      sys.stderr.write('Could Not Synchronize Time\r\n')
+  '''
+
+  def sync_time(self):
+    HOST = self.scopeserver_host
+    PORT = self.scopeserver_port
+
+    cmd = '{get_scopeserver_time}'
+
+    dt_array = np.empty((0),'int64')
+    t_diff_array = np.empty((0),'int64')
+
+    n = 50
+    for i in range(n):
+      # Create a socket (SOCK_STREAM means a TCP socket)
+      with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # Connect to server and send cmd
+        sock.connect((HOST, PORT))
+        t0 = time.time_ns()
+        sock.sendall(bytes(cmd, "utf-8"))
+
+        # Receive response from the server and finish
+        response = str(sock.recv(1024), "utf-8")
+        t2 = time.time_ns()
+
+      if response.split()[0] == 'scopeserver_time':
+        t_ss = int(response.split()[1])
+        dt = t2 - t0
+        t_diff = (t_ss - dt/2) - t0
+        dt_array = np.append(dt_array,dt)
+        t_diff_array = np.append(t_diff_array,t_diff)
+      else:
+        self.scopeserver_connected = False
+        sys.stderr.write('Could Not Synchronize Time\r\n')
+
+    dt = dt_array*1e-9
+    t_diff = t_diff_array*1e-9
+    t_diff_mu = int(t_diff_array.mean())
+    sys.stderr.write('\r\ndt = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (dt.mean(),dt.min(),dt.max(),dt.std()))
+    sys.stderr.write('t_diff = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (t_diff.mean(),t_diff.min(),t_diff.max(),t_diff.std()))
+    time.clock_settime_ns(time.CLOCK_REALTIME,time.time_ns()+t_diff_mu)
+    sys.stderr.write('Time Synchronized\r\n')
+    sys.stderr.write('Current Time:  %s\r\n' % (time.strftime('%a %b %d %H:%M:%S %Z %Y')))
+
+
 
 
 if (__name__ == '__main__'):
@@ -348,19 +460,17 @@ if (__name__ == '__main__'):
 
   pid = os.getpid()
   try:
-    pidfile = open('/var/run/auto_guider.pid','w')
+    pidfile = open('/var/run/picam_autoguider.pid','w')
     pidfile.write('%d\n' % (pid))
     pidfile.close()
   except:
     pass
 
-#  server_address = get_ip()
-  server_address = '10.0.1.21'
-  server_address = ''
+  server_address = get_ip()
   port = 54040
 
-  sys.stderr.write('\r\nStarting AutoGuider at %s port %d\r\n' % (server_address, port))
+  sys.stderr.write('\r\nStarting PiCAM AutoGuider at %s:%d\r\n' % (server_address, port))
 
-  ag = auto_guider()
-  ag.server_start(server_address, port)
+  ag = autoguider(server_address, port)
+  ag.server_start()
 
