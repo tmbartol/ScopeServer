@@ -3,7 +3,7 @@
 button.slewbutton {
     margin: 15px 15px 15px 15px;
 }
-button.guidebutton {
+button.trackbutton {
     margin: 15px 15px 15px 15px;
 }
 button.actionbutton {
@@ -53,9 +53,64 @@ button.actionbutton {
                 <th class="displayvalue" id="pos_error_dec"></th>
                 <th class="displayvalue" id="pos_error_ra"></th>
             </tr>
+            <tr>
+                <th class="serverlabel">Autoguider:</th>
+                <th class="displayvalue" id="autoguider_connected"></th>
+                <th class="displayvalue" id="autoguider_status"></th>
+            </tr>
     </table>
 </div>
+
+<!--  Autoguider Image -->
+<!--
+<div align="center">
+<img 
+     src="data:image/jpg;base64,{{image}}"
+     alt="Guider Image"
+     style="width:400px;height:300px;"
+>
+</div>
+-->
+
+
+<div align="center">
+
+<!--
+-->
+<!--  Tracking/Autoguiding Buttons -->
+    <button class="btn btn-primary dark-background red slewbutton" name="jog_target_north" value="jog_target_north">
+        <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
+    </button>
+    <button class="btn btn-primary dark-background red slewbutton" name="jog_target_south" value="jog_target_south">
+        <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
+    </button>
+
+    <button class="btn btn-primary dark-background red trackbutton" name="slew_track" value="track">
+        <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
+    </button>
+
+    <button class="btn btn-primary dark-background red slewbutton" name="jog_target_west" value="jog_target_west">
+        <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
+    </button>
+    <button class="btn btn-primary dark-background red slewbutton" name="jog_target_east" value="jog_target_east">
+        <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
+    </button>
+
+<!--  Autoguider Image -->
+<img 
+     id="guider_view"
+     src=""
+     alt="Autoguider View"
+     style="width:400px;height:300px;"
+/>
+
+</div>
+
+
 <!--  Scope Slew Controls  -->
+<!--  Comment out Scope Slew Controls  -->
+<!--
+<div>
 <div align="center">
     <button class="btn btn-primary dark-background red slewbutton" name="slew_north" value="north">
         <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
@@ -65,7 +120,7 @@ button.actionbutton {
     <button class="btn btn-primary dark-background red slewbutton" name="slew_west" value="west">
         <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
     </button>
-    <button class="btn btn-primary dark-background red guidebutton" name="slew_guide" value="guide">
+    <button class="btn btn-primary dark-background red trackbutton" name="slew_track" value="track">
         <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
     </button>
     <button class="btn btn-primary dark-background red slewbutton" name="slew_east" value="east">
@@ -77,29 +132,56 @@ button.actionbutton {
         <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
     </button>
 </div>
+</div>
+-->
+
 
 <!--  Display ScopeServer Error Message  -->
 <div align="center" style="color:red" id="errorDiv"></div>
 
 <!--  Raspberry Pi Reboot/Shutdown Controls,  Scope DARV control  -->
+<!--  Autoguider Reboot/Shutdown Controls  -->
 <div class="fixed">
     <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">G RST</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">GPRST</button>
     </object>
     <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="ssreset" value="ssreset">S RST</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="ssreset" value="ssreset">SSRST</button>
     </object>
     <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="reboot" value="reboot">Reboot</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="ssreboot" value="ssreboot">SSRBT</button>
     </object>
     <object align="left">
-        <button class="btn btn-warning dark-background red actionbutton" name="shutdown" value="shutdown">Shutdwn</button>
+        <button class="btn btn-warning dark-background red actionbutton" name="ssshutdown" value="ssshutdown">SSDWN</button>
     </object>
     <object align="right">
         <button class="btn btn-primary dark-background red actionbutton" name="meridianflip" value="meridianflip">MFLP</button>
     </object>
     <object align="right">
         <button class="btn btn-primary dark-background red actionbutton" name="darv" value="darv">DARV</button>
+    </object>
+
+<!--  Autoguider Reboot/Shutdown Controls  -->
+    <object align="left">
+        <button class="btn btn-primary dark-background red actionbutton" name="agreboot" value="agreboot">agrbt</button>
+    </object>
+    <object align="left">
+        <button class="btn btn-primary dark-background red actionbutton" name="agshutdown" value="agshutdown">agdwn</button>
+    </object>
+    <object align="right">
+        <button class="btn btn-primary dark-background red actionbutton" name="agimage" value="agimage">img</button>
+    </object>
+    <object align="right">
+        <button class="btn btn-primary dark-background red actionbutton" name="agfind" value="agfind">find</button>
+    </object>
+    <object align="right">
+        <button class="btn btn-primary dark-background red actionbutton" name="agcenter" value="agcenter">cent</button>
+    </object>
+    <object align="right">
+        <button class="btn btn-primary dark-background red actionbutton" name="agguide" value="agguide">guide</button>
+    </object>
+    <object align="right">
+        <button class="btn btn-primary dark-background red actionbutton" name="agauto" value="agauto">auto</button>
     </object>
 </div>
 
@@ -118,6 +200,36 @@ function get_scope_status() {
                     if (key != "status") {
                         var value = result[key];
                         $(key).html(value);
+                    }
+                }
+                $("#errorDiv").html("");
+            } else {
+                console.log(result);
+                window.location.reload();
+            }
+        },
+        error: function(jqXHR, textStatus, String) {
+            $("#errorDiv").html("Error Contacting ScopeServer");
+        },
+    });
+}
+</script>
+
+<!--  Script to Guider Status Display  -->
+<script>
+function get_guider_view() {
+    jQuery.ajax({
+        data: {
+            csrfmiddlewaretoken: csrftoken,
+            action: "guiderView",
+        },
+        type: 'POST',
+        success: function(result) {
+            if (result['status'] == "Success") {
+                for (var key in result) {
+                    if (key == "#guider_view") {
+                        var value = result[key]
+                        $('#guider_view').attr('src',value);
                     }
                 }
                 $("#errorDiv").html("");
@@ -161,10 +273,11 @@ function get_scope_status() {
             },
         });
     }
-    $(".slewbutton").on('touchstart',function(e){e.preventDefault(); slewSend(e);});
-    $(".slewbutton").on('click',function(e){slewSend(e);});
-    $(".slewbutton").on('touchend',function(e){e.preventDefault(); slewSend(e);});
-    $(".guidebutton").click(function(e){slewSend(e);});
+//    $(".slewbutton").on('touchstart',function(e){e.preventDefault(); slewSend(e);});
+//    $(".slewbutton").on('click',function(e){slewSend(e);});
+//    $(".slewbutton").on('touchend',function(e){e.preventDefault(); slewSend(e);});
+    $(".slewbutton").click(function(e){slewSend(e);});
+    $(".trackbutton").click(function(e){slewSend(e);});
 </script>
 
 <script>
@@ -200,5 +313,9 @@ function get_scope_status() {
 
 <script>
   var interval_scope_status = setInterval(get_scope_status, 500);
+</script>
+
+<script>
+  var interval_guider_view = setInterval(get_guider_view, 2000);
 </script>
 {% endblock %}
