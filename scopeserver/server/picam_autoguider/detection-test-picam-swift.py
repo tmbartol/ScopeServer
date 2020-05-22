@@ -36,8 +36,10 @@ def find_guide_star(img_fn,img_ref_fn):
   w = 128
   h = 128
 
-  img_color = cv2.imread(img_fn,cv2.IMREAD_UNCHANGED)
-  data = np.flipud(cv2.cvtColor(img_color,cv2.COLOR_BGR2GRAY))
+#  img_color = cv2.imread(img_fn,cv2.IMREAD_UNCHANGED)
+#  data = np.flipud(cv2.cvtColor(img_color,cv2.COLOR_BGR2GRAY))
+  img = cv2.imread(img_fn,cv2.IMREAD_GRAYSCALE)
+  data = np.flipud(img)
   print(str(data.shape))
 
   mean, median, std = sigma_clipped_stats(data, sigma=3.0)
@@ -123,8 +125,10 @@ for img_fn in img_fns[1:]:
   t = float('.'.join(img_fn.split('.')[2:4]))-t0
 
   print('\nAnalyzing %s' % (img_fn))
-  img_color = cv2.imread(img_fn,cv2.IMREAD_UNCHANGED)
-  data = np.flipud(cv2.cvtColor(img_color,cv2.COLOR_BGR2GRAY))
+#  img_color = cv2.imread(img_fn,cv2.IMREAD_UNCHANGED)
+#  data = np.flipud(cv2.cvtColor(img_color,cv2.COLOR_BGR2GRAY))
+  img = cv2.imread(img_fn,cv2.IMREAD_GRAYSCALE)
+  data = np.flipud(img)
   print(str(data.shape))
 
   guide_update_rect = np.array([guide_star_pos+[dx,dy]-[w/2.,h/2.],w,h])
