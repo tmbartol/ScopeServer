@@ -134,7 +134,7 @@ class scope_server:
     self.autoguider_host = host_dict[self.scopeserver_host]
     self.autoguider_port = 54040
     self.autoguider_connected = False
-    self.autoguider_autoengage = True
+    self.autoguider_autoengage = False
     self.autoguider_guiding = False
     self.autoguider_status = 'idle'
     self.autoguider_img_count = 0
@@ -371,7 +371,7 @@ class scope_server:
     if self.autoguider_autoengage:
       tmpstr += ' autoengage'
     else:
-      tmpstr += ' no-autoengage'
+      tmpstr += ' no-autoeng'
     status_dict['autoguider_connected'] = tmpstr
     status_dict['autoguider_status'] = '%s %d' % (self.autoguider_status, self.autoguider_img_count)
 
