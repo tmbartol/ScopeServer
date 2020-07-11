@@ -212,14 +212,13 @@ class scope_server:
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
 
-    self.track_rate = self.sidereal_rate
-    self.delta = 1.0*self.track_rate
-    sys.stderr.write('\n\nGuide rate set to: %.6g  counts per second\n\n' % (self.track_rate))
+    sys.stderr.write('\n\nSidereal Tracking Rate set to: %.6g  counts per second\n\n' % (self.sidereal_rate))
     self.slew_rate_max = 2*self.res_ra/360.
     self.slew_rate = self.slew_rate_max
     self.slew_rate_find = self.slew_rate_max/10
     self.slew_rate_center = self.slew_rate_max/50
-    self.slew_rate_track = self.track_rate
+    self.slew_rate_correct = 3*self.sidereal_rate
+    self.slew_rate_track = self.sidereal_rate
 
     self.timezone = time.timezone
 
@@ -232,8 +231,9 @@ class scope_server:
     self.target_ra_time_array = [0,0,0.0]
     self.target_dec_pos = 0.0
     self.target_dec_angle = "+00*00:00"
-#    self.target_epsilon_pos = 1.0/2.0
-    self.target_epsilon_pos = 300.0
+#    self.target_epsilon_1 = 1.0/2.0
+    self.target_epsilon_1 = 300.0
+    self.target_epsilon_2 = 3.0
 
     self.dRA = 0
     self.adj_RA = 0
@@ -859,9 +859,18 @@ class scope_server:
         else:
           self.pos_ra = self.ra_mod.ServoGetPos()
           self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
-          if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_pos:
-            self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
-            self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+          # Continue GOTO until we're within target_epsilon_2 
+          if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_2:
+            if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_1:
+              # Move at current slew rate until we're within target_epsilon_1
+              self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
+              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+            else:
+              # Move at correction slew rate until we're within target_epsilon_2
+              servo_ra_correct_rate = int(self.slew_rate_correct*0.000512*2**16)
+              self.ra_mod.ServoSetGain(self.Kp_s, self.Kd_s, self.Ki_s, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
+              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_correct_rate, self.servo_accel, 0)
+              # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
 
       if self.ra_axis_running | self.ra_axis_tracking:
         if self.ra_mod.module_error:
@@ -1341,7 +1350,7 @@ class scope_server:
       if self.autoguider_guiding:
         # Perform guide_star_correction by adjusting the goto coordinates
         self.dRA = -int(cmd.split()[1])
-        self.dDEC = -int(cmd.split()[2])
+        self.dDEC = int(cmd.split()[2])
         self.adj_RA = self.dRA/self.sidereal_rate
         self.guide_correction_pending = True
         self.adj_target_ra_time_array(self.adj_RA)

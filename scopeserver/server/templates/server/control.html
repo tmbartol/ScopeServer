@@ -139,8 +139,7 @@ button.actionbutton {
 <!--  Display ScopeServer Error Message  -->
 <div align="center" style="color:red" id="errorDiv"></div>
 
-<!--  Raspberry Pi Reboot/Shutdown Controls,  Scope DARV control  -->
-<!--  Autoguider Reboot/Shutdown Controls  -->
+<!--  ScopeServer Reboot/Shutdown/Action Controls -->
 <div class="fixed">
     <object align="left">
         <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">GPRST</button>
@@ -158,10 +157,16 @@ button.actionbutton {
         <button class="btn btn-primary dark-background red actionbutton" name="meridianflip" value="meridianflip">MFLP</button>
     </object>
     <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="darv" value="darv">DARV</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="agauto" value="agauto">AUTO</button>
     </object>
 
-<!--  Autoguider Reboot/Shutdown Controls  -->
+<!--
+    <object align="right">
+        <button class="btn btn-primary dark-background red actionbutton" name="darv" value="darv">DARV</button>
+    </object>
+-->
+
+<!--  Autoguider Reboot/Shutdown/Action Controls  -->
     <object align="left">
         <button class="btn btn-primary dark-background red actionbutton" name="agreboot" value="agreboot">agrbt</button>
     </object>
@@ -181,7 +186,7 @@ button.actionbutton {
         <button class="btn btn-primary dark-background red actionbutton" name="agguide" value="agguide">guide</button>
     </object>
     <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="agauto" value="agauto">auto</button>
+        <button class="btn btn-primary dark-background red actionbutton" name="agana" value="agana">ana</button>
     </object>
 </div>
 
@@ -316,6 +321,6 @@ function get_guider_view() {
 </script>
 
 <script>
-  var interval_guider_view = setInterval(get_guider_view, 2000);
+  var interval_guider_view = setInterval(get_guider_view, 1000);
 </script>
 {% endblock %}

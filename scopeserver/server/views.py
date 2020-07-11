@@ -242,6 +242,10 @@ def control(request):
         print("Toggle Guiding")
         response = send_autoguider_cmd('{toggle_guiding}')
         result['status'] = "Success"
+      elif action == "agana":
+        print("Toggle Analysis")
+        response = send_autoguider_cmd('{toggle_analysis}')
+        result['status'] = "Success"
       elif action == "guiderView":
         result['#guider_view'] = send_autoguider_cmd('{get_view}')
         result['status'] = "Success"
