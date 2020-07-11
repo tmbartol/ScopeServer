@@ -12,6 +12,7 @@ import datetime
 import re
 import math
 import numpy as np
+import scipy.stats as sps
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -31,7 +32,7 @@ from astropy.visualization.mpl_normalize import ImageNormalize
 from photutils import  DAOStarFinder, CircularAperture
 from photutils.psf.groupstars import DAOGroup
 
-from PIL import Image
+from PIL import Image, ImageFont, ImageDraw
 import random
 import glob
 
@@ -79,6 +80,7 @@ class _Getch:
     return ch
 
 
+
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
   def handle(self):
     try:
@@ -115,15 +117,56 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
   request_queue_size = 20
 
 
+def to_precision(v,p):
+  fstr = '%%.%dg' % (p)
+  vf = fstr % (abs(v))
+  se = vf.split('e')
+  mant = se[0]
+  if len(se) > 1:
+    expon = 'e'+ se[1]
+  else:
+    expon = ''
+  nz = ''
+  sd = mant.split('.')
+  if len(sd) > 1:
+    if sd[0] == '0':
+      if len(mant) < p+2:
+        nz = '0'*(p+2 - len(mant))
+    else:
+      if len(mant) < p+1:
+        nz = '0'*(p+1 - len(mant))
+  else:
+    if len(mant) < p:
+      if sd[0] == '0':
+        nz = '.' + '0'*(p+1 - len(mant))
+      else:
+        nz = '.' + '0'*(p - len(mant))
+  if (v < 0.0):
+      mant = '-' + mant
+  vfinal = mant + nz + expon
+  return(vfinal)
+
+
 
 class autoguider:
 
-  def __init__(self, server_address, port):
+  def __init__(self, server_address, port, sim_img_mode=False):
     self.input_running = False
     self.server_running = False
     self.capture_continuous = False
     self.autoguider_q = queue.Queue(maxsize=0)
     self.autoguider_running = False
+    self.guiding = False
+    self.analyzing = False
+    self.correction_log = None
+    self.sim_img_mode=sim_img_mode
+    self.dRA = 0
+    self.dDEC = 0
+    self.driftRA = 0
+    self.driftDEC = 0
+    self.drift_t0 = 0
+    self.drift_dt = 0
+    self.drift_ana = np.empty((0,3),'float')
 
     self.autoguider_host = server_address
     self.autoguider_port = port
@@ -133,15 +176,14 @@ class autoguider:
     self.scopeserver_host = host_dict[self.autoguider_host]
     self.scopeserver_port = 54030
 
-
+    self.status = 'idle'
+    self.init_gamma_lut(gamma=2.5, blackpoint=20)
     self.init_cam()
-
-    self.status = 'idle %d' % (self.img_count)
 
 
   def get_status(self):
-    status = self.status
-    return status
+    status_str = '%s %d' % (self.status, self.img_count)
+    return status_str
 
 
   def get_view(self):
@@ -187,6 +229,7 @@ class autoguider:
     sys.stderr.write('   f -> find guide star\r\n')
     sys.stderr.write('   g -> start guiding\r\n')
     sys.stderr.write('   s -> stop guiding\r\n')
+    sys.stderr.write('   a -> toggle drift analysis\r\n')
     sys.stderr.write('   w -> wifi connect with ScopeServer\r\n')
     sys.stderr.write('   t -> synchronize time with ScopeServer\r\n')
     sys.stderr.write('   r -> reboot Autoguider rpi system\r\n')
@@ -245,37 +288,90 @@ class autoguider:
       elif cmd == 'guide_start':
         sys.stderr.write('Guiding Started...\r\n')
         self.img_count = 0
-        self.status = 'finding_guide_star %d' % (self.img_count)
-        self.nightshot_sim()
+        self.status = 'finding_guide_star'
+        if self.sim_img_mode:
+          self.nightshot_sim()
+        else:
+          self.nightshot()
         self.find_guide_star()
-        self.status = 'found_guide_star %d' % (self.img_count)
+        self.status = 'found_guide_star'
         self.guiding = True
+        self.correction_log = open('./correction_log.dat','w')
         self.autoguider_q.put(('guide_star_drift', None))
 
       elif cmd == 'guide_stop':
         sys.stderr.write('Guiding Stopped\r\n')
-        self.status = 'idle %d' % (self.img_count)
+        self.status = 'idle'
         self.guiding = False
+        if self.correction_log:
+          self.correction_log.close()
+          self.correction_log = None
 
       elif cmd == 'find_guide_star':
-        self.status = 'finding_guide_star %d' % (self.img_count)
-        self.nightshot_sim()
+        self.status = 'finding_guide_star'
+        if self.sim_img_mode:
+          self.nightshot_sim()
+        else:
+          self.nightshot()
         self.find_guide_star()
-        self.status = 'found_guide_star %d' % (self.img_count)
+        self.status = 'found_guide_star'
 
       elif cmd == 'guide_star_drift':
         if self.guiding:
-          self.status = 'active_guiding %d' % (self.img_count)
-          self.nightshot_sim()
+          self.status = 'active_guiding'
+          if self.sim_img_mode:
+            self.nightshot_sim()
+          else:
+            self.nightshot()
           self.guide_star_drift()
           self.scopeserver_guide_star_correction()
         else:
-          self.status = 'idle %d' % (self.img_count)
+          self.status = 'idle'
+
+      elif cmd == 'analysis_start':
+        sys.stderr.write('Drift Analysis Started...\r\n')
+        self.img_count = 0
+        self.driftRA = 0
+        self.driftDEC = 0
+        self.drift_ana = np.empty((0,3),'float')
+        self.status = 'finding_guide_star'
+        if self.sim_img_mode:
+          self.nightshot_sim()
+        else:
+          self.nightshot()
+        self.drift_t0 = time.time_ns()
+        self.find_guide_star()
+        self.status = 'found_guide_star'
+        self.drift_ana = np.append(self.drift_ana, np.array([[0,0,0]]), axis=0)
+        self.analyzing = True
+        self.autoguider_q.put(('guide_star_drift_analysis', None))
+
+      elif cmd == 'analysis_stop':
+        sys.stderr.write('Drift Analysis Stopped\r\n')
+        self.status = 'idle'
+        self.analyzing = False
+
+      elif cmd == 'guide_star_drift_analysis':
+        if self.analyzing:
+          self.status = 'active_analyzing'
+          if self.sim_img_mode:
+            self.nightshot_sim()
+          else:
+            self.nightshot()
+          self.drift_dt = (time.time_ns() - self.drift_t0)*1e-9
+          self.guide_star_drift_analysis()
+          self.autoguider_q.put(('guide_star_drift_analysis', None))
+        else:
+          self.status = 'idle'
 
       elif cmd == 'capture_one':
-        self.nightshot_sim()
+        if self.sim_img_mode:
+          self.nightshot_sim()
+        else:
+          self.nightshot()
+        self.make_guider_view()
         if (self.capture_continuous):
-          self.status = 'imaging %d' % (self.img_count)
+          self.status = 'imaging'
           self.autoguider_q.put(('capture_one', None))
 
       elif cmd == 'ss_connect':
@@ -363,6 +459,15 @@ class autoguider:
       elif k=='s':
         self.autoguider_q.put(('guide_stop', None))
 
+      # a, toggle drift analysis
+      elif k=='a':
+        if self.guiding:
+          self.autoguider_q.put(('guide_stop', None))
+        if not self.analyzing:
+          self.autoguider_q.put(('analysis_start', None))
+        else:
+          self.autoguider_q.put(('analysis_stop', None))
+
       # Report Position
       elif k=='p':
         self.autoguider_q.put(('update_pos', True))
@@ -397,6 +502,7 @@ class autoguider:
         sys.stderr.write('   f -> find guide star\r\n')
         sys.stderr.write('   g -> start guiding\r\n')
         sys.stderr.write('   s -> stop guiding\r\n')
+        sys.stderr.write('   a -> toggle drift analysis\r\n')
         sys.stderr.write('   w -> wifi connect with ScopeServer\r\n')
         sys.stderr.write('   t -> synchronize time with ScopeServer\r\n')
         sys.stderr.write('   r -> reboot Autoguider rpi system\r\n')
@@ -411,6 +517,7 @@ class autoguider:
         sys.stderr.write('   f -> find guide star\r\n')
         sys.stderr.write('   g -> start guiding\r\n')
         sys.stderr.write('   s -> stop guiding\r\n')
+        sys.stderr.write('   a -> toggle drift analysis\r\n')
         sys.stderr.write('   w -> wifi connect with ScopeServer\r\n')
         sys.stderr.write('   t -> synchronize time with ScopeServer\r\n')
         sys.stderr.write('   r -> reboot Autoguider rpi system\r\n')
@@ -439,7 +546,7 @@ class autoguider:
         self.capture_continuous = True
         self.autoguider_q.put(('capture_one', None))
       else:
-        self.status = 'idle %d' % (self.img_count)
+        self.status = 'idle'
         self.capture_continuous = False
       response = 'ack_toggle_imaging'
 
@@ -452,6 +559,8 @@ class autoguider:
       response = 'ack_center_guide_star'
 
     elif cmd == 'toggle_guiding':
+      if self.analyzing:
+        self.autoguider_q.put(('analysis_stop', None))
       if not self.guiding:
         self.autoguider_q.put(('guide_start', None))
       else:
@@ -472,6 +581,15 @@ class autoguider:
 
     elif cmd == 'get_status':
       response = str(self.get_status())
+
+    elif cmd == 'toggle_analysis':
+      if self.guiding:
+        self.autoguider_q.put(('guide_stop', None))
+      if not self.analyzing:
+        self.autoguider_q.put(('analysis_start', None))
+      else:
+        self.autoguider_q.put(('analysis_stop', None))
+      response = 'ack_toggle_analyzing'
 
     elif cmd == 'get_view':
       response = str(self.get_view())
@@ -519,6 +637,7 @@ class autoguider:
 
     self.cam.framerate = 1/self.exposure
     self.cam.shutter_speed = int(self.exposure*1e6/1.0)
+    self.cam.exposure_compensation = 12
     self.cam.iso = 800
     self.cam.meter_mode = 'average'
     self.cam.exposure_mode = 'night'
@@ -548,7 +667,22 @@ class autoguider:
     self.img_count = 0
     self.guider_view = 'data:image/jpg;base64,'
     self.image = None
+    self.image_c = None
     self.guide_star_rect = None
+    self.guide_star_rect_xy = None
+    self.make_guider_view()
+
+
+  def init_gamma_lut(self, gamma=1.0, blackpoint=0):
+
+    bp = blackpoint
+    invGamma = 1.0/gamma
+    self.gamma_lut = np.zeros((256,),dtype='uint8')
+    self.gamma_lut[bp:] = np.array([0.5+(((i-bp)/(255.0-bp))**invGamma)*255 for i in np.arange(bp,256)]).astype('uint8')
+
+#    return cv2.LUT(image, gamma_lut)
+    return
+
 
 
   def nightshot(self):
@@ -562,16 +696,22 @@ class autoguider:
     img_data = np.frombuffer(img_buf.getvalue(), dtype=np.uint8)
 #    img_buf.seek(0)
 #    img_buf.truncate()
-    img = cv2.imdecode(img_data, cv2.IMREAD_GRAYSCALE)
-    img = np.flipud(img)
-    self.image = img
-    img = cv2.resize(img,(400,300))
-    img_buf = io.BytesIO(cv2.imencode(".jpg", img, (cv2.IMWRITE_JPEG_QUALITY, 75))[1])
-    self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
-
+#    img = cv2.imdecode(img_data, cv2.IMREAD_GRAYSCALE)
+    img_c = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
+    img_g = cv2.cvtColor(img_c, cv2.COLOR_BGR2GRAY)
+#    img = np.flipud(img)
+    self.image = img_g
+    self.image_c = img_c
 #    ofn = './images/image.jpg'
 #    cv2.imwrite(ofn, img, (cv2.IMWRITE_JPEG_QUALITY, 75))
-    sys.stderr.write('      Captured: %s\r\n' % (str(img.shape)))
+    sys.stderr.write('      Captured: %s\r\n' % (str(self.image_c.shape)))
+
+#    img = cv2.resize(img,(1600,1200))
+#    img_buf = io.BytesIO(cv2.imencode(".jpg", img, (cv2.IMWRITE_JPEG_QUALITY, 75))[1])
+#    self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
+
+#    if self.status != 'active_analyzing':
+#      self.make_guider_view()
 
     self.img_count += 1
 
@@ -588,27 +728,126 @@ class autoguider:
     '''
 
 
-
   def nightshot_sim(self):
 
-    time.sleep(1.2)
-    img_dir = './images_sim/'
+    time.sleep(1.0)
+    my_path = os.path.split(os.path.realpath(__file__))[0]
+    img_dir = os.path.join(my_path,'./images_2/')
     img_fns = sorted(glob.glob(img_dir + '*'))
+#    img_dir = './images_sim/'
+#    img_fns = sorted(glob.glob(img_dir + '*'))
+
     i = self.img_count % len(img_fns)
     img_fn = img_fns[i]
     sys.stderr.write('Reading sim image: %s\r\n' % (img_fn))
 
-    img = cv2.imread(img_fn, cv2.IMREAD_GRAYSCALE)
-    img = np.flipud(img)
-    self.image = img
+#    img_g = cv2.imread(img_fn, cv2.IMREAD_GRAYSCALE)
+    img_c = cv2.imread(img_fn, cv2.IMREAD_UNCHANGED)
+    img_g = cv2.cvtColor(img_c, cv2.COLOR_BGR2GRAY)
+    self.image = img_g
+    self.image_c = img_c
+    sys.stderr.write('Sim Image: %s\r\n' % (str(self.image_c.shape)))
+#    img = cv2.imread(img_fn)
+#    img = np.flipud(img)
+#    self.image = img
 
-#    img = cv2.resize(img,(400,300))
-#    img_buf = io.BytesIO(cv2.imencode(".jpg", img, (cv2.IMWRITE_JPEG_QUALITY, 75))[1])
-#    self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
+    '''
+#    pil_img = Image.fromarray(img).resize((1600,1200)).convert('L')
+    pil_img = Image.fromarray(img).resize((1600,1200))
+    font = ImageFont.truetype("/usr/share/fonts/dejavu/DejaVuSans.ttf", 48)
+    draw = ImageDraw.Draw(pil_img)
+    draw.text((100,100), self.status, (0xd0,0,0), font=font)
+    del draw
+    img_buf = io.BytesIO()
+    pil_img.save(img_buf,"JPEG",quality=75)
+    self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
+    '''
 
-    self.plot_guider_view()
+    '''
+    img = cv2.resize(img,(1600,1200))
+    img =cv2.putText(img=np.copy(img), text=str(self.img_count), org=(100,150),fontFace=1, fontScale=4, color=(0,0,0xd0), thickness=4)
+    img_buf = io.BytesIO(cv2.imencode(".jpg", img, (cv2.IMWRITE_JPEG_QUALITY, 75))[1])
+    self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
+    '''
+
+#    self.make_guider_view()
 
     self.img_count += 1
+
+
+  def make_guider_view(self):
+    if type(self.image_c) != type(None):
+      img = cv2.resize(self.image_c,(1600,1200))
+      img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    else:
+      img = np.zeros((1200,1600,3),dtype=np.uint8)
+#      img = np.zeros((2464,3280,3),dtype=np.uint8)
+
+    if self.status == 'imaging':
+      img = cv2.LUT(img,self.gamma_lut)
+
+    rescale = 1600/3280.
+    pil_img = Image.fromarray(img)
+#    pil_img = Image.fromarray(img).resize((1600,1200))
+    font = ImageFont.truetype("/usr/share/fonts/dejavu/DejaVuSans.ttf", 48)
+    draw = ImageDraw.Draw(pil_img)
+    if self.status == 'idle':
+      text_label = 'Idle'
+    elif self.status == 'imaging':
+      text_label = 'Imaging'
+    elif self.status == 'finding_guide_star':
+      text_label = 'Finding Guide Star'
+    elif self.status == 'found_guide_star':
+      text_label = 'Guide Star'
+    elif self.status == 'active_guiding':
+      text_label = 'Guiding'
+    elif self.status == 'active_analyzing':
+      text_label = 'Analyzing'
+    text_label = '%s %d' % (text_label, self.img_count)
+    draw.text((50,50), text_label, (0xd0,0,0), font=font)
+    #Edges of image
+    draw.line(((0,0),(1599,0)),fill=(0xd0,0,0),width=1)
+    draw.line(((0,1199),(1599,1199)),fill=(0xd0,0,0),width=1)
+    draw.line(((0,0),(0,1199)),fill=(0xd0,0,0),width=1)
+    draw.line(((1599,0),(1599,1199)),fill=(0xd0,0,0),width=1)
+
+    #Draw Cross hairs
+    draw.line(((800,0),(800,1199)),fill=(0xd0,0,0),width=1)
+    draw.line(((800+32,0),(800+32,1199)),fill=(0xd0,0,0),width=1)
+    draw.line(((800-32,0),(800-32,1199)),fill=(0xd0,0,0),width=1)
+
+    draw.line(((0,600),(1599,600)),fill=(0xd0,0,0),width=1)
+    draw.line(((0,600+32),(1599,600+32)),fill=(0xd0,0,0),width=1)
+    draw.line(((0,600-32),(1599,600-32)),fill=(0xd0,0,0),width=1)
+
+    #Draw Inscribed Circle
+    r = 599.0
+    position = np.array((799.5,599.5))
+    xy = np.array([position-[r,r],position+[r,r]])
+    xy = tuple(map(tuple, xy))
+    draw.ellipse(xy,fill=None,outline=(0xd0,0,0),width=1)
+
+    # Box guide star and circle minor stars
+    if (self.status == 'active_analyzing'):
+        xy = ( self.guide_star_rect_xy + np.array((self.driftRA,self.driftDEC)) )*rescale
+        xy = tuple(map(tuple, xy))
+        draw.rectangle(xy,fill=None,outline=(0xd0,0,0),width=3)
+    elif (self.status == 'found_guide_star') or (self.status == 'active_guiding'):
+      if type(self.guide_star_rect_xy) != type(None):
+        xy = self.guide_star_rect_xy*rescale
+        xy = tuple(map(tuple, xy))
+        draw.rectangle(xy,fill=None,outline=(0xd0,0,0),width=3)
+        if self.status == 'found_guide_star':
+          for position in self.positions:
+            r = 16.0
+            xy = np.array([position-[r,r],position+[r,r]])
+            xy = xy*rescale
+            xy = tuple(map(tuple, xy))
+            draw.ellipse(xy,fill=None,outline=(0xd0,0,0),width=3)
+    del draw
+    img_buf = io.BytesIO()
+    pil_img.save(img_buf,"JPEG",quality=75)
+    self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
 
 
   def plot_guider_view(self):
@@ -643,7 +882,52 @@ class autoguider:
     self.guider_view = 'data:image/png;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
 
 
+  def plot_drift_analysis(self):
+    img = self.image
+    plt.style.use('dark_background')
+    fig,ax = plt.subplots(1)
+    ax.spines['bottom'].set_color('#d00000')
+    ax.spines['top'].set_color('#d00000') 
+    ax.spines['right'].set_color('#d00000')
+    ax.spines['left'].set_color('#d00000')
+    ax.tick_params(axis='x', colors='#d00000', which='both')
+    ax.tick_params(axis='y', colors='#d00000', which='both')
+    ax.yaxis.label.set_color('#d00000')
+    ax.xaxis.label.set_color('#d00000')
+    ax.title.set_color('#d00000')
+
+    t = self.drift_ana[:,0]
+    ra = self.drift_ana[:,1]
+    dec = self.drift_ana[:,2]
+
+    ax.scatter(t, ra, marker='o', s=25, edgecolors='#d00000', facecolors='none')
+    ax.scatter(t, dec, marker='^', s=25, edgecolors='#d00000', facecolors='none')
+
+    if len(t) > 1:
+      t_lin = np.array([t.min(),t.max()])
+      (m,b,r,p,stderr) = sps.linregress(t, ra)
+      mm_ra = to_precision(m,2)
+      ra_lin = (m*t_lin) + b
+      (m,b,r,p,stderr) = sps.linregress(t, dec)
+      mm_dec = to_precision(m,2)
+      dec_lin = (m*t_lin) + b
+      ax.plot(t_lin, ra_lin, color='#d00000')
+      ax.plot(t_lin, dec_lin, color='#d00000', linestyle='--')
+
+      ax.text(0.05, 0.95, 'm_ra = %s\nm_dec = %s' % (mm_ra, mm_dec),
+        verticalalignment='top', horizontalalignment='left',
+        transform = ax.transAxes, fontsize=10, color='#d00000')
+
+
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf, format='png')
+    plt.close()
+    self.guider_view = 'data:image/png;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
+
+
   def find_guide_star(self):
+
+    self.make_guider_view()
 
     sys.stderr.write('Finding Guide Star...\r\n')
     self.ref_image = self.image
@@ -676,11 +960,14 @@ class autoguider:
 
     self.guide_star_pos = np.array([sources['xcentroid'][0],sources['ycentroid'][0]])
     self.guide_star_rect = np.array([self.guide_star_pos-[w/2.,h/2.],w,h])
+    self.guide_star_rect_xy = np.array( [self.guide_star_pos-[w/2.,h/2.],self.guide_star_pos+[w/2.,h/2.]] )
+    self.positions = np.transpose((sources['xcentroid'], sources['ycentroid']))
 
     swim_dir = './swim_tmp/'
     img_ref_fn = swim_dir + 'guide_ref.jpg'
     self.image_crop_rect(img, self.guide_star_rect, img_ref_fn)
 
+    '''
     # Show image with identified sources
     plt.style.use('dark_background')
     fig,ax = plt.subplots(1)
@@ -712,6 +999,10 @@ class autoguider:
     plt.savefig(img_buf, format='png')
     plt.close()
     self.guider_view = 'data:image/png;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
+    '''
+
+    self.status = 'found_guide_star'
+    self.make_guider_view()
     sys.stderr.write('Found Guide Star\r\n')
 
 
@@ -724,9 +1015,54 @@ class autoguider:
     cv2.imwrite(img_out_fn, img_cropped)
 
 
+  def guide_star_drift_analysis(self):
+
+    test_img_dir = './images_3/'
+    test_img_fns = sorted(glob.glob(test_img_dir + '*'))
+
+    swim_dir = './swim_tmp/'
+    img_ref_fn = swim_dir + 'guide_ref.jpg'
+    img_update_fn = swim_dir + 'guide_update.jpg'
+
+    guide_star_dat = np.empty((0,5))
+    guide_star_dat = np.append(guide_star_dat,[0,0,0,0,0]).reshape(-1,5)
+
+    dx = self.driftRA
+    dy = self.driftDEC
+    w = 128
+    h = 128
+
+    guide_update_rect = np.array([self.guide_star_pos+[dx,dy]-[w/2.,h/2.],w,h])
+    self.image_crop_rect(self.image, guide_update_rect, img_update_fn)
+
+    swim_cmd_template = '/home/pi/bin/swim 128 -i 2 -w -0.61 %s %s'
+    swim_cmd = swim_cmd_template % (img_ref_fn, img_update_fn)
+#    sys.stderr.write('%s\r\n' % (swim_cmd))
+    swim_log = sp.run([swim_cmd],shell=True,stdout=sp.PIPE,stderr=sp.PIPE)
+    swim_stdout = swim_log.stdout.decode('utf-8')
+    swim_stderr = swim_log.stdout.decode('utf-8')
+    toks = swim_stdout.split()
+#    print('swim output: \n  ' + swim_stdout)
+    snr = float(toks[0][0:-1])
+    dxi = float(toks[8][1:])
+    dyi = float(toks[9])
+    dx += dxi
+    dy += dyi
+#    self.driftRA += int(dxi*self.ra_counts_per_pixel)
+#    self.driftDEC += int(dyi*self.dec_counts_per_pixel)
+    self.driftRA += int(dxi)
+    self.driftDEC += int(dyi)
+    self.drift_ana = np.append(self.drift_ana, np.array([[self.drift_dt,self.driftRA,self.driftDEC]]), axis=0)
+
+#    sys.stderr.write('swim match:  SNR: %g  dX: %g  dY: %g\r\n' % (snr, dxi, dyi))
+    sys.stderr.write('swim match:  SNR: %g  driftRA: %d  driftDEC: %d\r\n' % (snr, self.driftRA, self.driftDEC))
+
+    self.plot_drift_analysis()
+
+
   def guide_star_drift(self):
 
-    test_img_dir = './images_2/'
+    test_img_dir = './images_3/'
     test_img_fns = sorted(glob.glob(test_img_dir + '*'))
 
     swim_dir = './swim_tmp/'
@@ -759,11 +1095,14 @@ class autoguider:
     dy += dyi
     self.dRA = int(dxi*self.ra_counts_per_pixel)
     self.dDEC = int(dyi*self.dec_counts_per_pixel)
+    self.correction_log.write('%d %d\n' % (self.dRA, self.dDEC))
 
 #    sys.stderr.write('swim match:  SNR: %g  dX: %g  dY: %g\r\n' % (snr, dxi, dyi))
     sys.stderr.write('swim match:  SNR: %g  dRA: %d  dDEC: %d\r\n' % (snr, self.dRA, self.dDEC))
 
 #    guide_star_dat = np.append(guide_star_dat,[t,dx,dy,dxi,dyi]).reshape(-1,5)
+
+    self.make_guider_view()
 
 
   def scopeserver_guide_star_correction(self):
@@ -855,6 +1194,10 @@ if (__name__ == '__main__'):
 #  server_address = sys.argv[1]
 #  port = int(sys.argv[2])
 
+  sim_img_mode=False
+  if (len(sys.argv)==2):
+    sim_img_mode=True
+
   pid = os.getpid()
   try:
     pidfile = open('/var/run/picam_autoguider.pid','w')
@@ -866,8 +1209,11 @@ if (__name__ == '__main__'):
   server_address = get_ip()
   port = 54040
 
-  sys.stderr.write('\r\nStarting PiCAM AutoGuider at %s:%d\r\n' % (server_address, port))
+  if sim_img_mode:
+    sys.stderr.write('\r\nStarting PiCAM AutoGuider at %s:%d in Simulated Image Mode\r\n' % (server_address, port))
+  else:
+    sys.stderr.write('\r\nStarting PiCAM AutoGuider at %s:%d\r\n' % (server_address, port))
 
-  ag = autoguider(server_address, port)
+  ag = autoguider(server_address, port, sim_img_mode=sim_img_mode)
   ag.server_start()
 
