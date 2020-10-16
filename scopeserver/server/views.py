@@ -7,7 +7,7 @@ from pdb import set_trace as debug
 import os
 import sys
 import socket
-import subprocess
+import subprocess as sp
 import glob
 import time
 import datetime
@@ -44,6 +44,7 @@ def send_scopeserver_cmd(cmd):
   host_dict['192.168.50.5'] = '192.168.50.10'
   autoguider_host = host_dict[scopeserver_host]
   autoguider_port = 54040
+  autoguider_ud_port = 54050
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -65,7 +66,7 @@ def send_scopeserver_cmd(cmd):
   return response #Response will not exist if there is an exception. 
 
 
-# Send a command to scope_server socket and receive response
+# Send a command to autoguider socket and receive response
 def send_autoguider_cmd(cmd):
 
   scopeserver_host = get_ip()
@@ -75,6 +76,7 @@ def send_autoguider_cmd(cmd):
   host_dict['192.168.50.5'] = '192.168.50.10'
   autoguider_host = host_dict[scopeserver_host]
   autoguider_port = 54040
+  autoguider_ud_port = 54050
   buf_size = int(2**16)
 
   # Create a socket (SOCK_STREAM means a TCP socket)
@@ -103,6 +105,38 @@ def send_autoguider_cmd(cmd):
     pass
   finally:
     guider_socket.close()
+  return response  #Response will be None if there is an exception. 
+
+
+# Send a command to autoguider updown server socket and receive response
+def send_autoguider_ud_cmd(cmd):
+
+  scopeserver_host = get_ip()
+  scopeserver_port = 54030
+  host_dict = {}
+  host_dict['10.0.1.20'] = '10.0.1.23'
+  host_dict['192.168.50.5'] = '192.168.50.10'
+  autoguider_host = host_dict[scopeserver_host]
+  autoguider_port = 54040
+  autoguider_ud_port = 54050
+
+  # Create a socket (SOCK_STREAM means a TCP socket)
+  updown_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+  response = ''
+  try:
+    # Connect to server and send data
+    updown_socket.settimeout(0.5)
+    updown_socket.connect((autoguider_host, autoguider_ud_port))
+    updown_socket.settimeout(None)
+    updown_socket.sendall(cmd.encode('utf-8'))
+
+    # Receive data from the server and shut down
+    response = updown_socket.recv(1024).decode('utf-8')
+  except:
+    pass
+  finally:
+    updown_socket.close()
   return response  #Response will be None if there is an exception. 
 
 
@@ -214,7 +248,7 @@ def control(request):
         ut2 = str(round(float(ut[-7:])*2)/2)[-1]
         result['#utc_time'] = ut1+ut2
         result['#t_acc'] = 't_acc:  %.4gus  :  %.4gus' % (1000*status_dict['t_offset'], 1000*status_dict['t_jitter'])
-        result['#meridian_mode'] = 'mflp:  %d' % (status_dict['meridian_mode'])
+        result['#meridian_mode'] = 'mflp:  %s' % (status_dict['meridian_mode'])
         result['#scope_position_dec'] = '%s (%d)' % (status_dict['dec_angle'], status_dict['dec_pos'])
         result['#scope_position_ra'] = '%s (%d)' % (status_dict['ra_time'], status_dict['ra_pos'])
         result['#target_position_dec'] = '%s (%d)' % (status_dict['target_dec_angle'], status_dict['target_dec_pos'])
@@ -225,10 +259,44 @@ def control(request):
         result['#pos_error_ra'] = '%d' % (status_dict['pos_error_ra'])
         result['#autoguider_connected'] = '%s' % (status_dict['autoguider_connected'])
         result['#autoguider_status'] = '%s' % (status_dict['autoguider_status'])
+        result['#gamma_val'] = '%s' % (status_dict['gamma_val_str'])
+        result['#gamma_val_str'] = '%s' % (status_dict['gamma_val_str'])
+        result['#bp_val'] = '%s' % (status_dict['bp_val_str'])
+        result['#bp_val_str'] = '%s' % (status_dict['bp_val_str'])
+
+        if lt2=='0':
+          result['#guider_view'] = send_autoguider_cmd('{get_view}')
+
+        result['status'] = "Success"
+      elif action == "set_gamma_val":
+        value = request.POST.get("value")
+        response = send_autoguider_cmd('{set_gamma_val %s}' % (value))
+        result['#gamma_val_str'] = '%s' % (value)
+        result['status'] = "Success"
+      elif action == "set_bp_val":
+        value = request.POST.get("value")
+        response = send_autoguider_cmd('{set_bp_val %s}' % (value))
+        result['#bp_val_str'] = '%s' % (value)
         result['status'] = "Success"
       elif action == "agimage":
         print("Toggle Imaging")
         response = send_autoguider_cmd('{toggle_imaging}')
+        result['status'] = "Success"
+      elif action == "gamma_minus":
+        print("Gamma Minus")
+        response = send_autoguider_cmd('{gamma_minus}')
+        result['status'] = "Success"
+      elif action == "gamma_plus":
+        print("Gamma Plus")
+        response = send_autoguider_cmd('{gamma_plus}')
+        result['status'] = "Success"
+      elif action == "bp_minus":
+        print("BlackPoint Minus")
+        response = send_autoguider_cmd('{bp_minus}')
+        result['status'] = "Success"
+      elif action == "bp_plus":
+        print("BlackPoint Plus")
+        response = send_autoguider_cmd('{bp_plus}')
         result['status'] = "Success"
       elif action == "agfind":
         print("Find Guide Star")
@@ -278,24 +346,31 @@ def control(request):
       elif action == "ssreboot":
         print("REBOOTING BY BUTTON PRESS")
         time.sleep(1)
-        subprocess.check_output(["sudo reboot"],shell=True)
+        sp.check_output(["sudo reboot"],shell=True)
       elif action == "ssshutdown":
         print("SHUTTING DOWN BY BUTTON PRESS")
         time.sleep(1)
-        subprocess.check_output(["sudo shutdown now"],shell=True)
+        sp.check_output(["sudo shutdown now"],shell=True)
       elif action == "agauto":
         print("Toggle Autoguider Autoengage")
         response = send_scopeserver_cmd('{toggle_autoguider_auto}')
         result['status'] = "Success"
+      elif action == "agreset":
+        print("RESETTING AUTOGUIDER BY BUTTON PRESS")
+        response = send_autoguider_ud_cmd('{reset_autoguider}')
+        result['status'] = "Success"
       elif action == "agreboot":
         print("REBOOTING AUTOGUIDER BY BUTTON PRESS")
-        response = send_scopeserver_cmd('{reboot_autoguider}')
+        response = send_autoguider_ud_cmd('{reboot_autoguider}')
         result['status'] = "Success"
       elif action == "agshutdown":
         print("SHUTTING DOWN AUTOGUIDER BY BUTTON PRESS")
-        response = send_scopeserver_cmd('{shutdown_autoguider}')
+        response = send_autoguider_ud_cmd('{shutdown_autoguider}')
         result['status'] = "Success"
-
+      elif action == "wifi":
+        print("CONNECTING TO WiFi NETWORK")
+        time.sleep(1)
+        os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_force_autohotspot.sh &')
     except Exception as e:
       result['status'] = "Failure"
       result['msg'] = str(e)
@@ -308,11 +383,11 @@ def control(request):
     if action == "reboot":
       print("REBOOTING BY BUTTON PRESS")
       time.sleep(1)
-      subprocess.check_output(["sudo reboot"],shell=True)
+      sp.check_output(["sudo reboot"],shell=True)
     elif action == "shutdown":
       print("SHUTTING DOWN BY BUTTON PRESS")
       time.sleep(1)
-      subprocess.check_output(["sudo shutdown now"],shell=True)
+      sp.check_output(["sudo shutdown now"],shell=True)
     '''
 
   '''
@@ -332,5 +407,6 @@ def control(request):
 
 #  return(render(request, "server/control.html", locals()))
 #  return(render(request, "server/control.html", context))
+#  return(render(request, "server/hamburger_body.html", {}))
   return(render(request, "server/control.html", {}))
 

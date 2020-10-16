@@ -1,23 +1,27 @@
 {% extends "server/base.html" %} {% block head %}
 <style>
 button.slewbutton {
-    margin: 15px 15px 15px 15px;
+    margin: 10px 10px 10px 10px;
 }
 button.trackbutton {
-    margin: 15px 15px 15px 15px;
+    margin: 10px 10px 10px 10px;
 }
 button.actionbutton {
-    margin: 0px 0px 0px 0px;
+    padding: 12px 5px;
+    font-size: 18px;
+    font-style: italic;
+    font-weight: normal;
 }
 </style>
 <style type="text/css">
   .dark-background {background-color:#202020;}
   .red {color:#d00000;}
 </style>
+
 {% endblock %} {% block body %} {% csrf_token %}
 <!--  Status Display  -->
 <!-- <div class="well well-sm"> -->
-<div>
+<div class="table">
     <table id="scopeinfo" border=1 bordercolor="#ff0000">
         <tr>
             <th class="serverlabel">GPS Loc:</th>
@@ -61,23 +65,21 @@ button.actionbutton {
     </table>
 </div>
 
+
+
 <!--  Autoguider Image -->
-<!--
 <div align="center">
 <img 
-     src="data:image/jpg;base64,{{image}}"
-     alt="Guider Image"
+     id="guider_view"
+     src=""
+     alt="Autoguider View"
      style="width:400px;height:300px;"
->
+/>
 </div>
--->
 
 
+<!--  Tracking/Autoguiding Motion Control Buttons -->
 <div align="center">
-
-<!--
--->
-<!--  Tracking/Autoguiding Buttons -->
     <button class="btn btn-primary dark-background red slewbutton" name="jog_target_north" value="jog_target_north">
         <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
     </button>
@@ -95,102 +97,131 @@ button.actionbutton {
     <button class="btn btn-primary dark-background red slewbutton" name="jog_target_east" value="jog_target_east">
         <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
     </button>
-
-<!--  Autoguider Image -->
-<img 
-     id="guider_view"
-     src=""
-     alt="Autoguider View"
-     style="width:400px;height:300px;"
-/>
-
 </div>
-
-
-<!--  Scope Slew Controls  -->
-<!--  Comment out Scope Slew Controls  -->
-<!--
-<div>
-<div align="center">
-    <button class="btn btn-primary dark-background red slewbutton" name="slew_north" value="north">
-        <span class="glyphicon glyphicon-arrow-up" aria-hidden="true"></span>
-    </button>
-</div>
-<div align="center">
-    <button class="btn btn-primary dark-background red slewbutton" name="slew_west" value="west">
-        <span class="glyphicon glyphicon-arrow-left" aria-hidden="true"></span>
-    </button>
-    <button class="btn btn-primary dark-background red trackbutton" name="slew_track" value="track">
-        <span class="glyphicon glyphicon-record" aria-hidden="true"></span>
-    </button>
-    <button class="btn btn-primary dark-background red slewbutton" name="slew_east" value="east">
-        <span class="glyphicon glyphicon-arrow-right" aria-hidden="true"></span>
-    </button>
-</div>
-<div align="center">
-    <button class="btn btn-primary dark-background red slewbutton" name="slew_south" value="south">
-        <span class="glyphicon glyphicon-arrow-down" aria-hidden="true"></span>
-    </button>
-</div>
-</div>
--->
 
 
 <!--  Display ScopeServer Error Message  -->
 <div align="center" style="color:red" id="errorDiv"></div>
 
-<!--  ScopeServer Reboot/Shutdown/Action Controls -->
-<div class="fixed">
-    <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">GPRST</button>
-    </object>
-    <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="ssreset" value="ssreset">SSRST</button>
-    </object>
-    <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="ssreboot" value="ssreboot">SSRBT</button>
-    </object>
-    <object align="left">
-        <button class="btn btn-warning dark-background red actionbutton" name="ssshutdown" value="ssshutdown">SSDWN</button>
-    </object>
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="meridianflip" value="meridianflip">MFLP</button>
-    </object>
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="agauto" value="agauto">AUTO</button>
-    </object>
 
-<!--
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="darv" value="darv">DARV</button>
-    </object>
--->
+<div class=tabpanel>
+  <!--  ScopeServer/Autoguider Reboot/Shutdown Controls -->
+  <div id="UpDownCtl" class="tabcontent">
+    <!--  ScopeServer/Autoguider Reboot/Shutdown Controls -->
+    <div class="button_bar">
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">gpsrst</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="ssreset" value="ssreset">ssrst</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="ssreboot" value="ssreboot">ssrbt</button>
+      </object>
+      <object>
+          <button class="btn btn-warning dark-background red actionbutton" name="ssshutdown" value="ssshutdown">ssdwn</button>
+      </object>
+    </div>
+    <div class="button_bar">
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="wifi" value="wifi">&nbsp; WiFi &nbsp;</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agreset" value="agreset">agrst</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agreboot" value="agreboot">agrbt</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agshutdown" value="agshutdown">agdwn</button>
+      </object>
+    </div>
+  </div>
 
-<!--  Autoguider Reboot/Shutdown/Action Controls  -->
-    <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="agreboot" value="agreboot">agrbt</button>
-    </object>
-    <object align="left">
-        <button class="btn btn-primary dark-background red actionbutton" name="agshutdown" value="agshutdown">agdwn</button>
-    </object>
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="agimage" value="agimage">img</button>
-    </object>
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="agfind" value="agfind">find</button>
-    </object>
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="agcenter" value="agcenter">cent</button>
-    </object>
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="agguide" value="agguide">guide</button>
-    </object>
-    <object align="right">
-        <button class="btn btn-primary dark-background red actionbutton" name="agana" value="agana">ana</button>
-    </object>
+  <!--  Autoguider Adjustment Controls  -->
+  <div id="ImgAdj" class="tabcontent">
+    <div class="button_bar">
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agauto" value="agauto">auto</button>
+      </object>
+
+      <object class="slidecontainer">
+        gamma: <object id="gamma_val_str"></object>
+        <object id="gamma_val"></object>
+      </object>
+    </div>
+    <div class="button_bar">
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="meridianflip" value="meridianflip">mflp</button>
+      </object>
+
+      <object class="slidecontainer">
+        black point: <object id="bp_val_str"></object>
+        <object id="bp_val"></object>
+      </object>
+    </div>
+  </div>
+
+  <!--  Autoguider Action Controls  -->
+  <div id="AGCtl" class="tabcontent">
+    <div class="button_bar">
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agfind" value="agfind">find</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agguide" value="agguide">guide</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agana" value="agana">ana</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agimage" value="agimage">img</button>
+      </object>
+    </div>
+  </div>
+
+  <button class="tablink" onclick="openButtonBar('UpDownCtl', this)">
+    <span class="glyphicon glyphicon-off" aria-hidden="true"></span>
+  </button>
+
+  <button class="tablink" onclick="openButtonBar('ImgAdj', this)">
+    <span class="glyphicon glyphicon-tasks" aria-hidden="true"></span>
+  </button>
+
+  <button class="tablink" onclick="openButtonBar('AGCtl', this)">
+    <span class="glyphicon glyphicon-star" aria-hidden="true"></span>
+  </button>
+
 </div>
 
-<!--  Script to Update Status Display  -->
+
+
+<script>
+function openButtonBar(buttonBar,elmnt) {
+  var i, viz, tabcontent, tablinks;
+  viz = document.getElementById(buttonBar).style.display;
+  tabcontent = document.getElementsByClassName("tabcontent");
+  for (i = 0; i < tabcontent.length; i++) {
+    tabcontent[i].style.display = "none";
+  }
+  tablinks = document.getElementsByClassName("tablink");
+  for (i = 0; i < tablinks.length; i++) {
+    tablinks[i].style.backgroundColor = "";
+  }
+  if (viz === "none") {
+    document.getElementById(buttonBar).style.display = "block";
+  } else {
+    document.getElementById(buttonBar).style.display = "none";
+  }
+  elmnt.style.backgroundColor = "#600000";
+
+}
+// Get the element with id="defaultOpen" and click on it
+document.getElementById("defaultOpen").click();
+</script>
+
+
+<!--  Script to Update Status Display and Guider View  -->
 <script>
 function get_scope_status() {
     jQuery.ajax({
@@ -202,11 +233,27 @@ function get_scope_status() {
         success: function(result) {
             if (result['status'] == "Success") {
                 for (var key in result) {
-                    if (key != "status") {
+                    if (key == "#guider_view") {
+                        var value = result[key]
+                        $('#guider_view').attr('src',value);
+                    }
+//                    else if (key.endsWith("_val")) {
+                    else if (key == "#gamma_val") {
+                        var value = result[key];
+                        var slider_html = '<input name="set_gamma_val" class="slider actionslider" type="range" min="1" max="5" step="0.5" value="' + value + '">';
+                        $(key).html(slider_html);
+                    }
+                    else if (key == "#bp_val") {
+                        var value = result[key];
+                        var slider_html = '<input name="set_bp_val" class="slider actionslider" type="range" min="0" max="20" step="1" value="' + value + '">';
+                        $(key).html(slider_html);
+                    }
+                    else if (key != "status") {
                         var value = result[key];
                         $(key).html(value);
                     }
                 }
+                $(".actionslider").on("input", function(e){ sliderSend(e); });
                 $("#errorDiv").html("");
             } else {
                 console.log(result);
@@ -220,35 +267,6 @@ function get_scope_status() {
 }
 </script>
 
-<!--  Script to Guider Status Display  -->
-<script>
-function get_guider_view() {
-    jQuery.ajax({
-        data: {
-            csrfmiddlewaretoken: csrftoken,
-            action: "guiderView",
-        },
-        type: 'POST',
-        success: function(result) {
-            if (result['status'] == "Success") {
-                for (var key in result) {
-                    if (key == "#guider_view") {
-                        var value = result[key]
-                        $('#guider_view').attr('src',value);
-                    }
-                }
-                $("#errorDiv").html("");
-            } else {
-                console.log(result);
-                window.location.reload();
-            }
-        },
-        error: function(jqXHR, textStatus, String) {
-            $("#errorDiv").html("Error Contacting ScopeServer");
-        },
-    });
-}
-</script>
 
 <!--  Slew Control Script   -->
 <script>
@@ -278,13 +296,16 @@ function get_guider_view() {
             },
         });
     }
-//    $(".slewbutton").on('touchstart',function(e){e.preventDefault(); slewSend(e);});
-//    $(".slewbutton").on('click',function(e){slewSend(e);});
-//    $(".slewbutton").on('touchend',function(e){e.preventDefault(); slewSend(e);});
-    $(".slewbutton").click(function(e){slewSend(e);});
-    $(".trackbutton").click(function(e){slewSend(e);});
+    $(".slewbutton").click(function(e){
+      slewSend(e);
+    });
+    $(".trackbutton").click(function(e){
+      slewSend(e);
+    });
 </script>
 
+
+<!--  Action Button Control Script  -->
 <script>
     function actionSend(e){
         jQuery.ajax({
@@ -316,11 +337,41 @@ function get_guider_view() {
     });
 </script>
 
+
+<!--  Action Slider Control Script  -->
+<script>
+    function sliderSend(e){
+        jQuery.ajax({
+            data: {
+                csrfmiddlewaretoken: csrftoken,
+                action: e.currentTarget.name,
+                value: e.currentTarget.value,
+            },
+            type: 'POST',
+            success: function(result) {
+                if (result['status'] == "Success") {
+                    for (var key in result) {
+                        if (key != "status") {
+                            var value = result[key];
+                            $(key).html(value+"*");
+                        }
+                    }
+                } else {
+                    alert(result['msg']);
+                    window.location.reload();
+                }
+            },
+            error: function(jqXHR, textStatus, String) {
+                $("#errorDiv").html("Error Contacting ScopeServer");
+            },
+        });
+    }
+</script>
+
+
+<!-- Set Interval to call get_scope_status -->
 <script>
   var interval_scope_status = setInterval(get_scope_status, 500);
 </script>
 
-<script>
-  var interval_guider_view = setInterval(get_guider_view, 1000);
-</script>
 {% endblock %}
