@@ -105,9 +105,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
               self.request.sendall(response)
         else:
           return
-    except ConnectionResetError:
-      sys.stderr.write('Connection reset by peer.\r\n')
+    except:
+      sys.stderr.write('Exception in Autoguider TCP Command Processor.\r\n')
       pass
+#    except ConnectionResetError:
+#      sys.stderr.write('Connection reset by peer.\r\n')
+#      pass
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -177,12 +180,15 @@ class autoguider:
     self.scopeserver_port = 54030
 
     self.status = 'idle'
-    self.init_gamma_lut(gamma=2.5, blackpoint=20)
+    self.gamma=2.5
+    self.blackpoint=5
+#    self.blackpoint=20
+    self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
     self.init_cam()
 
 
   def get_status(self):
-    status_str = '%s %d' % (self.status, self.img_count)
+    status_str = '%s %d %g %d' % (self.status, self.img_count, self.gamma, self.blackpoint)
     return status_str
 
 
@@ -282,6 +288,23 @@ class autoguider:
       cmd = autoguider_cmd[0]
       cmd_arg = autoguider_cmd[1]
 
+      # Cancel continuous capture as appropriate
+      if cmd != 'capture_one':
+        self.status = 'idle'
+        self.capture_continuous = False
+
+      '''
+      # Cancel guiding as appropriate
+      if cmd != 'guide_star_drift' and cmd != 'find_guide_star':
+        self.status = 'idle'
+        self.guiding = False
+
+      # Cancel drift analysis as appropriate
+      if cmd != 'guide_star_drift_analysis' and cmd != 'find_guide_star':
+        self.status = 'idle'
+        self.analyzing = False
+      '''
+
       if cmd == 'jog_pos':
         pass
 
@@ -294,10 +317,12 @@ class autoguider:
         else:
           self.nightshot()
         self.find_guide_star()
-        self.status = 'found_guide_star'
-        self.guiding = True
-        self.correction_log = open('./correction_log.dat','w')
-        self.autoguider_q.put(('guide_star_drift', None))
+        if self.status == 'found_guide_star':
+          self.guiding = True
+          self.correction_log = open('./correction_log.dat','w')
+          self.autoguider_q.put(('guide_star_drift', None))
+        else:
+          self.autoguider_q.put(('guide_stop', None))
 
       elif cmd == 'guide_stop':
         sys.stderr.write('Guiding Stopped\r\n')
@@ -314,7 +339,6 @@ class autoguider:
         else:
           self.nightshot()
         self.find_guide_star()
-        self.status = 'found_guide_star'
 
       elif cmd == 'guide_star_drift':
         if self.guiding:
@@ -341,10 +365,12 @@ class autoguider:
           self.nightshot()
         self.drift_t0 = time.time_ns()
         self.find_guide_star()
-        self.status = 'found_guide_star'
-        self.drift_ana = np.append(self.drift_ana, np.array([[0,0,0]]), axis=0)
-        self.analyzing = True
-        self.autoguider_q.put(('guide_star_drift_analysis', None))
+        if self.status == 'found_guide_star':
+          self.drift_ana = np.append(self.drift_ana, np.array([[0.,0.,0.]]), axis=0)
+          self.analyzing = True
+          self.autoguider_q.put(('guide_star_drift_analysis', None))
+        else:
+          self.autoguider_q.put(('analysis_stop', None))
 
       elif cmd == 'analysis_stop':
         sys.stderr.write('Drift Analysis Stopped\r\n')
@@ -381,6 +407,13 @@ class autoguider:
 
       elif cmd == 'sync_time':
         self.sync_time()
+
+      elif cmd == 'reset_autoguider':
+        print('Resetting Autoguider...')
+        time.sleep(1)
+        os.system('sudo systemctl restart autoguider_control.service')
+#        os.execl('/home/pi/src/scopeserver-git/scopeserver/server/picam_autoguider/picam_autoguider.py',(' '))
+#        os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_control_agreset.sh &')
 
       elif cmd == 'reboot_autoguider':
         time.sleep(1)
@@ -550,6 +583,48 @@ class autoguider:
         self.capture_continuous = False
       response = 'ack_toggle_imaging'
 
+    elif cmd.split()[0] == 'set_gamma_val':
+      self.gamma = float(cmd.split()[1])
+      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+      self.make_guider_view()
+      response = 'ack_set_gamma_val'
+
+    elif cmd.split()[0] == 'set_bp_val':
+      self.blackpoint = int(float(cmd.split()[1]))
+      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+      self.make_guider_view()
+      response = 'ack_set_bp_val'
+
+    elif cmd == 'gamma_minus':
+      self.gamma -= 0.5
+      if self.gamma < 0.5:
+        self.gamma = 0.5
+      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+      self.make_guider_view()
+      response = 'ack_gamma_minus'
+
+    elif cmd == 'gamma_plus':
+      self.gamma += 0.5
+      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+      self.make_guider_view()
+      response = 'ack_gamma_plus'
+
+    elif cmd == 'bp_minus':
+      self.blackpoint -= 1
+      if self.blackpoint < 0:
+        self.blackpoint = 0
+      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+      self.make_guider_view()
+      response = 'ack_bp_minus'
+
+    elif cmd == 'bp_plus':
+      self.blackpoint += 1
+      if self.blackpoint > 255:
+        self.blackpoint = 255
+      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+      self.make_guider_view()
+      response = 'ack_bp_plus'
+
     elif cmd == 'find_guide_star':
       self.autoguider_q.put(('find_guide_star', None))
       response = 'ack_find_guide_star'
@@ -600,6 +675,10 @@ class autoguider:
     elif cmd == 'quit_server':
       self.server_stop()
 
+    elif cmd == 'reset_autoguider':
+      response = 'reset_autoguider'
+      self.autoguider_q.put(('reset_autoguider', None))
+
     elif cmd == 'reboot_autoguider':
       response = 'reboot_autoguider'
       self.autoguider_q.put(('reboot_autoguider', None))
@@ -633,17 +712,21 @@ class autoguider:
     self.cam.resolution = (3280,2464)
     self.cam.rotation = 180
 
-    self.exposure = 1.0
+    self.exposure = 1.0  # exposure time in seconds
 
     self.cam.framerate = 1/self.exposure
     self.cam.shutter_speed = int(self.exposure*1e6/1.0)
-    self.cam.exposure_compensation = 12
+    self.cam.exposure_compensation = 24  # increase exposure by 4 stops
     self.cam.iso = 800
     self.cam.meter_mode = 'average'
     self.cam.exposure_mode = 'night'
     self.cam.image_denoise = False
     time.sleep(5)
     self.cam.exposure_mode = 'off'
+#    g = self.cam.awb_gains
+    g = (1.1,2.0)
+    self.cam.awb_mode = 'off'
+    self.cam.awb_gains = g
 
 #    self.cam.capture('./init_image.jpg', use_video_port=True, quality=75)
     # Capture to memory buffer:
@@ -663,17 +746,19 @@ class autoguider:
     sys.stderr.write('  ISO: %s\r\n' % (str(self.cam.iso)))
     sys.stderr.write('  Digital gain: %s\r\n' % (str(float(self.cam.digital_gain))))
     sys.stderr.write('  Analog gain: %s\r\n' % (str(float(self.cam.analog_gain))))
+    sys.stderr.write('  AWB gains: %s\r\n' % (str(self.cam.awb_gains)))
 
     self.img_count = 0
     self.guider_view = 'data:image/jpg;base64,'
     self.image = None
     self.image_c = None
+    self.cdf = None
     self.guide_star_rect = None
     self.guide_star_rect_xy = None
     self.make_guider_view()
 
 
-  def init_gamma_lut(self, gamma=1.0, blackpoint=0):
+  def set_gamma_lut(self, gamma=1.0, blackpoint=0):
 
     bp = blackpoint
     invGamma = 1.0/gamma
@@ -777,14 +862,34 @@ class autoguider:
 
   def make_guider_view(self):
     if type(self.image_c) != type(None):
-      img = cv2.resize(self.image_c,(1600,1200))
-      img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+#      img = cv2.resize(self.image_c,(1600,1200))
+      img = cv2.resize(self.image,(1600,1200))
+      img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+      '''
+      if type(self.cdf) == type(None):
+        hist,bins = np.histogram(img.flatten(),256,[0,256])
+        cdf = hist.cumsum()
+        cdf_m = np.ma.masked_equal(cdf,0)
+        cdf_m = (cdf_m - cdf_m.min())*255/(cdf_m.max()-cdf_m.min())
+        self.cdf = np.ma.filled(cdf_m,0).astype('uint8')
+      img = self.cdf[img]
+      '''
+#      img = img*2
+#      img = cv2.equalizeHist(img)
+#      R, G, B = cv2.split(img)
+#      Req = cv2.equalizeHist(R)
+#      Geq = cv2.equalizeHist(G)
+#      Beq = cv2.equalizeHist(B)
+#      img = cv2.merge((Req, Geq, Beq))
+#      img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+#      img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     else:
       img = np.zeros((1200,1600,3),dtype=np.uint8)
 #      img = np.zeros((2464,3280,3),dtype=np.uint8)
 
-    if self.status == 'imaging':
-      img = cv2.LUT(img,self.gamma_lut)
+    img = cv2.LUT(img,self.gamma_lut)
+#    if self.status == 'imaging':
+#      img = cv2.LUT(img,self.gamma_lut)
 
     rescale = 1600/3280.
     pil_img = Image.fromarray(img)
@@ -799,11 +904,13 @@ class autoguider:
       text_label = 'Finding Guide Star'
     elif self.status == 'found_guide_star':
       text_label = 'Guide Star'
+    elif self.status == 'no_guide_star_found':
+      text_label = 'No Guide Star Found'
     elif self.status == 'active_guiding':
       text_label = 'Guiding'
     elif self.status == 'active_analyzing':
       text_label = 'Analyzing'
-    text_label = '%s %d' % (text_label, self.img_count)
+    text_label = '%s %d  \u03B3=%g bp=%d' % (text_label, self.img_count, self.gamma, self.blackpoint)
     draw.text((50,50), text_label, (0xd0,0,0), font=font)
     #Edges of image
     draw.line(((0,0),(1599,0)),fill=(0xd0,0,0),width=1)
@@ -941,14 +1048,21 @@ class autoguider:
 #    print((mean, median, std))
 #    print(bkg_sigma)
 
-    daofind = DAOStarFinder(fwhm=9.0, sharphi=0.65, threshold=20.0*bkg_sigma, exclude_border=True)
+    daofind = DAOStarFinder(fwhm=9.0, sharphi=0.75, threshold=30.0*bkg_sigma, exclude_border=True)
+#    daofind = DAOStarFinder(fwhm=9.0, sharphi=0.65, threshold=20.0*bkg_sigma, exclude_border=True)
 
-    sources = daofind(img - median)
-    for col in sources.colnames:
+    try:
+      sources = daofind(img - median)
+      for col in sources.colnames:
         sources[col].info.format = '%.8g'  # for consistent table output
 
-    sources.sort(['peak'])
-    sources.reverse()
+      sources.sort(['peak'])
+      sources.reverse()
+    except:
+      self.status = 'no_guide_star_found'
+      self.make_guider_view()
+      sys.stderr.write('\rNo Guide Star Found\r\n')
+      return
 
 #    print('')
 #    print('All sources:')
@@ -957,6 +1071,12 @@ class autoguider:
 #    print('')
 #    print('Guide Source:')
 #    print(sources[0])
+
+    if len(sources) == 0:
+      self.status = 'no_guide_star_found'
+      self.make_guider_view()
+      sys.stderr.write('\rNo Guide Star Found\r\n')
+      return
 
     self.guide_star_pos = np.array([sources['xcentroid'][0],sources['ycentroid'][0]])
     self.guide_star_rect = np.array([self.guide_star_pos-[w/2.,h/2.],w,h])
@@ -1050,12 +1170,12 @@ class autoguider:
     dy += dyi
 #    self.driftRA += int(dxi*self.ra_counts_per_pixel)
 #    self.driftDEC += int(dyi*self.dec_counts_per_pixel)
-    self.driftRA += int(dxi)
-    self.driftDEC += int(dyi)
+    self.driftRA += dxi
+    self.driftDEC += dyi
     self.drift_ana = np.append(self.drift_ana, np.array([[self.drift_dt,self.driftRA,self.driftDEC]]), axis=0)
 
 #    sys.stderr.write('swim match:  SNR: %g  dX: %g  dY: %g\r\n' % (snr, dxi, dyi))
-    sys.stderr.write('swim match:  SNR: %g  driftRA: %d  driftDEC: %d\r\n' % (snr, self.driftRA, self.driftDEC))
+    sys.stderr.write('swim match:  SNR: %g  driftRA: %.4g  driftDEC: %.4g\r\n' % (snr, self.driftRA, self.driftDEC))
 
     self.plot_drift_analysis()
 
