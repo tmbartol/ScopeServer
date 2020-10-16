@@ -28,15 +28,76 @@
               font-family: verdana;
               font-size: 20px;
           }
-      </style>
-      <style>
+          div.table {
+              margin: 0px 0px 7px 0px;
+          } 
           div.fixed {
               position: fixed;
               width: 100%;
-              bottom: 30px;
+              bottom: 0px;
               border: 3px solid #d00000;
               background-color: #202020;
           } 
+          div.button_bar {
+              display: flex;
+              justify-content: space-between;
+          } 
+          div.button_group {
+              display: inline;
+          } 
+          div.button_group_times {
+              font-family: times;
+              display: inline;
+          } 
+
+          .tabpanel {
+            width:100%;
+            position:fixed;
+            bottom:0;
+          }
+
+          .tablink {
+            background-color: #400000;
+            color: #d00000;
+            float: left;
+            border: none;
+            outline: none;
+            cursor: pointer;
+            padding: 10px 10px;
+            font-size: 17px;
+            width: 15%;
+          }
+
+          /* Style the tab content */
+          .tabcontent {
+            display: none;
+            padding: 0px 0px 20px 0px;
+          }
+
+          .slidecontainer {
+            width: 70%;
+            font-size: 16px;
+            padding: 0px 10px 10px 0px;
+          }
+
+          .slider {
+            -webkit-appearance: none;
+            width: 30%;
+            height: 10px;
+            border-radius: 15px;
+            background: #400000;
+            outline: none;
+          }
+
+          .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 10px;
+            height: 20px;
+            border-radius: 15%;
+            background: #d00000;
+          }
+
       </style>
     {% block head %}
     {% endblock %}

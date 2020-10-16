@@ -133,11 +133,14 @@ class scope_server:
     host_dict['192.168.50.5'] = '192.168.50.10'
     self.autoguider_host = host_dict[self.scopeserver_host]
     self.autoguider_port = 54040
+    self.autoguider_available = False
     self.autoguider_connected = False
     self.autoguider_autoengage = False
     self.autoguider_guiding = False
     self.autoguider_status = 'idle'
     self.autoguider_img_count = 0
+    self.autoguider_gamma = 1.0
+    self.autoguider_bp = 0
 
     self.ra_axis_running = False
     self.dec_axis_running = False
@@ -148,7 +151,7 @@ class scope_server:
     self.ra_axis_darv_west = False
     self.goto_target_running = False
     self.resume_mode = 'NONE'  # allowed functions:  NONE, GUIDE, GOTO
-    self.meridian_mode = 1  # allowed values:  1, -1
+    self.meridian_mode = 1  # allowed values:  1 (for N_CW), -1 (for N_CCW)
     self.encoder_res_ra = 40000
     self.encoder_res_dec = 40000
     self.worm_gear_ra = 576
@@ -199,15 +202,20 @@ class scope_server:
 #    horizon_pos = (90.0 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
 #    horizon_pos = (99.25 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
 #    horizon_pos = (98.917 + self.site_longitude + 360*orbit_frac)*self.degree_counts_ra
+
     # Not sure why we need to add 0.028398 to orbit_frac but it works!
     orbit_offset = 0.028389
     horizon_pos = (90 + self.site_longitude + 360*(orbit_frac+orbit_offset))*self.degree_counts_ra
     self.offset_pos = (0 + self.site_longitude + 360*(orbit_frac+orbit_offset))*self.degree_counts_ra
 #    self.pos_ra = horizon_pos  # set home RA angle at Western horizon
     self.pos_ra = horizon_pos-self.offset_pos  # set home RA angle at Western horizon
+    self.horizon_pos = self.pos_ra
+    self.meridian_pos = 2*self.pos_ra
+
     #self.pos_ra = 213.5*self.degree_counts_ra  # set home RA angle at Western horizon
     #self.pos_ra = 90*self.degree_counts_ra  # home RA angle is 90 degrees
     #self.pos_ra = 180*self.degree_counts_ra  # home RA angle is 98.99 degrees
+
     self.pos_dec = 0*self.degree_counts_dec  # home Dec angle is 0 degrees
     self.dec_angle = self.get_dec_angle()
     self.ra_axis_start_pos = self.pos_ra
@@ -217,7 +225,7 @@ class scope_server:
     self.slew_rate = self.slew_rate_max
     self.slew_rate_find = self.slew_rate_max/10
     self.slew_rate_center = self.slew_rate_max/50
-    self.slew_rate_correct = 3*self.sidereal_rate
+    self.slew_rate_correction = 3*self.sidereal_rate
     self.slew_rate_track = self.sidereal_rate
 
     self.timezone = time.timezone
@@ -225,6 +233,8 @@ class scope_server:
     sys.stderr.write('\nStarting ScopeSever in %s mode\n' % (self.scope_mode))
     sys.stderr.write('    GPS Fix: %s\n' % (str(self.gpsd_connected)))
     sys.stderr.write('    Site location set to: Lat: %.9g   Lon: %.9g\n\n' % (self.site_latitude, self.site_longitude))
+
+    sys.stderr.write('    HorizonPos: %d   OffsetPos: %d  Pos RA: %d\n\n' % (int(self.horizon_pos), int(self.offset_pos), int(self.pos_ra)))
 
     self.target_ra_pos = 0.0
     self.target_ra_time = '00:00:00'
@@ -254,9 +264,11 @@ class scope_server:
       self.ra_mod.verbosity = 1
       self.dec_mod.verbosity = 1
       self.servo_sidereal_rate = int(round(self.sidereal_rate*0.000512*2**16))
+      self.servo_ra_correction_rate = int(self.slew_rate_correction*0.000512*2**16)
       self.servo_ra_slew_rate = int(round(self.slew_rate*0.000512*2**16))
       self.servo_dec_slew_rate = int(round(self.slew_rate*0.000512*2**16))
-      self.servo_accel = 4000
+      self.servo_accel = 4000  # 4000
+      self.servo_correction_accel = 4000  # 4000
       self.motor_current_ra = 0
       self.motor_current_dec = 0
       self.pos_error_ra = 0
@@ -339,8 +351,14 @@ class scope_server:
 
     if not self.update_counter%20:
       self.t_offset, self.t_jitter = [ float(item) for item in subprocess.check_output(['ntpq -p'],shell=True).decode('utf-8').splitlines()[2].split()[8:] ]
+
+    if self.autoguider_available and not self.autoguider_connected:
+      self.autoguider_connect()
+
+    if not self.update_counter%2:
       if self.autoguider_connected:
         self.autoguider_get_status()
+
     self.update_counter += 1
 
     status_dict['t_offset'] = self.t_offset
@@ -349,7 +367,10 @@ class scope_server:
     status_dict['site_latitude'] = self.site_latitude
     status_dict['site_longitude'] = self.site_longitude
 
-    status_dict['meridian_mode'] = self.meridian_mode
+    if self.meridian_mode == 1:
+      status_dict['meridian_mode'] = 'N_CW'
+    else:
+      status_dict['meridian_mode'] = 'N_CCW'
     status_dict['dec_angle'] = self.get_dec_angle()
     status_dict['dec_pos'] = self.pos_dec
     status_dict['ra_time'] = self.get_ra_time()
@@ -364,28 +385,46 @@ class scope_server:
     status_dict['pos_error_ra'] = self.pos_error_ra
     status_dict['pos_error_dec'] = self.pos_error_dec
 
-    if self.autoguider_connected:
-      tmpstr = 'connected'
+    if self.autoguider_available:
+      if self.autoguider_connected:
+        tmpstr = 'connected'
+      else:
+        tmpstr = 'disconnected'
     else:
-      tmpstr = 'not connected'
+        tmpstr = 'unavailable'
+
     if self.autoguider_autoengage:
       tmpstr += ' autoengage'
     else:
       tmpstr += ' no-autoeng'
+
     status_dict['autoguider_connected'] = tmpstr
     status_dict['autoguider_status'] = '%s %d' % (self.autoguider_status, self.autoguider_img_count)
+    status_dict['gamma_val_str'] = '%g' % (self.autoguider_gamma)
+    status_dict['bp_val_str'] = '%g' % (self.autoguider_bp)
 
     return status_dict
 
 
+  def set_meridian_mode(self, mode):
+    if (mode != self.meridian_mode):
+      self.meridian_mode = mode
+      self.target_dec_pos = self.dec_angle_to_pos(self.target_dec_angle)
+      self.dec_mod.ServoSetPos(int(self.pos_dec))
+      self.pos_dec = self.dec_mod.ServoGetPos()
+      self.dec_angle = self.get_dec_angle()
+    self.meridian_mode = mode
+
+
   def meridian_flip(self):
-    self.meridian_mode *= -1
-    self.dec_angle = self.get_dec_angle()
+    self.meridian_mode = -self.meridian_mode
+#    mode = -self.meridian_mode
+#    self.set_meridian_mode(mode)
 
 
   # Get declination angle position of scope
   def get_dec_angle(self):
-    pos = (self.res_dec - self.pos_dec)%self.res_dec
+    pos = self.meridian_mode*(self.res_dec - self.pos_dec)%self.res_dec
     dec_angle = 360.0*pos/self.res_dec
     dec_dd = int(dec_angle)
     dec_rem = 60*abs(dec_angle - dec_dd)
@@ -403,7 +442,7 @@ class scope_server:
     mm = float(mm)
     ss = float(ss)
     dec_angle = (dd + (dd_sign*(mm/60.0 + ss/3600.0)))%360.0
-    pos = (self.res_dec - (self.res_dec*dec_angle/360.0))%self.res_dec
+    pos = self.meridian_mode*(self.res_dec - (self.res_dec*dec_angle/360.0))%self.res_dec
     if pos > (self.res_dec/2):
        pos = pos - self.res_dec
     sys.stderr.write('Target Dec Angle: %s  pos %.9g\r\n' % (dec_angle_str, pos))
@@ -816,8 +855,9 @@ class scope_server:
         self.dec_axis_start_time = time.time()
 
         self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_goto_rate, self.servo_accel, 0)
         self.dec_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
+
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_goto_rate, self.servo_accel, 0)
         self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), servo_dec_goto_rate, self.servo_accel, 0)
 
       elif cmd == 'goto_target_stop':
@@ -826,14 +866,19 @@ class scope_server:
       elif cmd == 'align_to_target':
         if not self.motion_running:
           pos_ra = self.ra_time_array_to_pos(self.target_ra_time_array)
+#          if (pos_ra <= self.meridian_pos):
+#            self.set_meridian_mode(1)
+#          else:
+#            self.set_meridian_mode(-1)
+
           pos_dec = self.target_dec_pos
           self.ra_mod.ServoSetPos(int(pos_ra))
           self.dec_mod.ServoSetPos(int(pos_dec))
           self.pos_ra = self.ra_mod.ServoGetPos()
           self.pos_dec = self.dec_mod.ServoGetPos()
           sys.stderr.write('Aligned servo to target at:  pos_ra: %d   pos_dec: %d\r\n' % (self.pos_ra, self.pos_dec))
-        else:
-          self.motion_q.put(('align_to_target', None))
+          if cmd_arg:
+            self.motion_q.put(('ra_track_start', None))
 
       elif (cmd == 'motion_continue') | (cmd == 'update_pos'):
         self.pos_ra = self.ra_mod.ServoGetPos()
@@ -841,6 +886,8 @@ class scope_server:
         if cmd_arg:
           sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
+
+#  Monitor and respond to motion dynamics:  
 
       if self.ra_axis_goto:
         # Update RA GOTO Target
@@ -859,18 +906,22 @@ class scope_server:
         else:
           self.pos_ra = self.ra_mod.ServoGetPos()
           self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
+          target_ra_delta = (self.pos_ra - self.target_ra_pos)
+          # sys.stderr.write('RA GOTO target_ra_delta = %d\r\n' % (target_ra_delta))
+          target_ra_delta = abs(self.pos_ra - self.target_ra_pos)
           # Continue GOTO until we're within target_epsilon_2 
-          if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_2:
-            if abs(self.pos_ra - self.target_ra_pos) > self.target_epsilon_1:
+          if target_ra_delta > self.target_epsilon_2:
+            if target_ra_delta > self.target_epsilon_1:
               # Move at current slew rate until we're within target_epsilon_1
               self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
               self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+              # sys.stderr.write('Slewing to within target_epsilon_1: %d\r\n' % (target_ra_delta))
             else:
               # Move at correction slew rate until we're within target_epsilon_2
-              servo_ra_correct_rate = int(self.slew_rate_correct*0.000512*2**16)
               self.ra_mod.ServoSetGain(self.Kp_s, self.Kd_s, self.Ki_s, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
-              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_correct_rate, self.servo_accel, 0)
+              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_correction_rate, self.servo_correction_accel, 0)
               # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+              # sys.stderr.write('Slewing to within target_epsilon_2: %d\r\n' % (target_ra_delta))
 
       if self.ra_axis_running | self.ra_axis_tracking:
         if self.ra_mod.module_error:
@@ -1076,6 +1127,7 @@ class scope_server:
         response = ''
 
     if response == 'scopeserver_connected':
+      self.autoguider_available = True
       self.autoguider_connected = True
       sys.stderr.write('Autoguider Connected\r\n')
     else:
@@ -1106,11 +1158,15 @@ class scope_server:
       self.autoguider_connected = True
       self.autoguider_status = response[0]
       self.autoguider_img_count = int(response[1])
+      self.autoguider_gamma = float(response[2])
+      self.autoguider_bp = int(response[3])
 #      sys.stderr.write('Autoguider Connected\r\n')
     else:
       self.autoguider_connected = False
       self.autoguider_status = 'idle'
       self.autoguider_img_count = 0
+      self.autoguider_gamma = 1.0
+      self.autoguider_bp = 0
 #      sys.stderr.write('Autoguider Not Connected\r\n')
 
 
@@ -1204,7 +1260,7 @@ class scope_server:
         if self.dec_axis_running:
           self.motion_q.put(('dec_slew_stop', None))
         else:
-          self.motion_q.put(('dec_slew_start', -1))
+          self.motion_q.put(('dec_slew_start', -1*self.meridian_mode))
 #        sys.stderr.write('  moved N to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # S, down arrow
@@ -1212,7 +1268,7 @@ class scope_server:
         if self.dec_axis_running:
           self.motion_q.put(('dec_slew_stop', None))
         else:
-          self.motion_q.put(('dec_slew_start', 1))
+          self.motion_q.put(('dec_slew_start', 1*self.meridian_mode))
 #        sys.stderr.write('  moved S to:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # E, right arrow
@@ -1338,6 +1394,7 @@ class scope_server:
 #      self.motion_q.put(('jog_pos', (jog_ra, jog_dec)))
 
     elif cmd == 'autoguider_connect':
+      self.autoguider_available = True
       self.autoguider_connected = True
       response = 'autoguider_connected'
       sys.stderr.write('Autoguider Connected\r\n')
@@ -1403,6 +1460,7 @@ class scope_server:
       response = 'ack_jog_target_west'
 
     elif cmd == 'get_scopeserver_time':
+      self.autoguider_available = True
       self.autoguider_connected = True
       response = 'scopeserver_time %s' % (str(time.time_ns()))
 #      sys.stderr.write('Current Time:  %s\r\n' % (time.strftime('%a %b %d %H:%M:%S %Z %Y')))
@@ -1553,10 +1611,11 @@ class scope_server:
       response = '1"Updating Planetary Data# #"'
 
     elif cmd == ':CM#':
+      resume_tracking = self.ra_axis_tracking
       self.ra_axis_goto = False
       self.motion_q.put(('ra_slew_stop', None))
       self.motion_q.put(('dec_slew_stop', None))
-      self.motion_q.put(('align_to_target', None))
+      self.motion_q.put(('align_to_target', resume_tracking))
       response = "#"
 
     elif cmd == ':RS#':
@@ -1597,10 +1656,10 @@ class scope_server:
       response = '0'
 
     elif cmd == ':Mn#':  # Start move North
-      self.motion_q.put(('dec_slew_start',-1))
+      self.motion_q.put(('dec_slew_start',-1*self.meridian_mode))
 
     elif cmd == ':Ms#':  # Start move South
-      self.motion_q.put(('dec_slew_start',1))
+      self.motion_q.put(('dec_slew_start',1*self.meridian_mode))
 
     elif cmd == ':Me#':  # Start move East
       self.motion_q.put(('ra_slew_start',1))
