@@ -263,6 +263,10 @@ def control(request):
         result['#gamma_val_str'] = '%s' % (status_dict['gamma_val_str'])
         result['#bp_val'] = '%s' % (status_dict['bp_val_str'])
         result['#bp_val_str'] = '%s' % (status_dict['bp_val_str'])
+        result['#exposure_val'] = '%s' % (status_dict['exposure_val_str'])
+        result['#exposure_val_str'] = '%s' % (status_dict['exposure_val_str'])
+        result['#autoguider_interval_val'] = '%s' % (status_dict['autoguider_interval_val_str'])
+        result['#autoguider_interval_val_str'] = '%s' % (status_dict['autoguider_interval_val_str'])
 
         if lt2=='0':
           result['#guider_view'] = send_autoguider_cmd('{get_view}')
@@ -277,6 +281,16 @@ def control(request):
         value = request.POST.get("value")
         response = send_autoguider_cmd('{set_bp_val %s}' % (value))
         result['#bp_val_str'] = '%s' % (value)
+        result['status'] = "Success"
+      elif action == "set_exposure_val":
+        value = request.POST.get("value")
+        response = send_autoguider_cmd('{set_exposure_val %s}' % (value))
+        result['#exposure_val_str'] = '%s' % (value)
+        result['status'] = "Success"
+      elif action == "set_autoguider_interval_val":
+        value = request.POST.get("value")
+        response = send_autoguider_cmd('{set_autoguider_interval_val %s}' % (value))
+        result['#autoguider_interval_val_str'] = '%s' % (value)
         result['status'] = "Success"
       elif action == "agimage":
         print("Toggle Imaging")
