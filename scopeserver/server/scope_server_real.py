@@ -99,16 +99,26 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 #              sys.stderr.write('Server responding:  %s\r\n' % (response.encode('utf-8')))
               self.request.sendall(response.encode('utf-8'))
         else:
+          self.request.close()
           return
-    except ConnectionResetError:
-      if self.verbose:
-        sys.stderr.write('Connection reset by peer.\r\n')
+    except Exception as e:
+      '''
+      sys.stderr.write('Exception in Autoguider TCP Command Processor.\r\n')
+      sys.stderr.write('  cmd:  %s\r\n' % (str(cmd)))
+      if hasattr(e, 'message'):
+        sys.stderr.write('    %s\r\n' % (str(e.message)))
+      else:
+        sys.stderr.write('    %s\r\n' % (str(e)))
+      '''
       pass
+    finally:
+      self.request.close()
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
   allow_reuse_address = True
-  daemon_threads = True
+#  daemon_threads = True
+  daemon_threads = False
   timeout = None
   request_queue_size = 100
 
@@ -132,6 +142,7 @@ class scope_server:
     self.scopeserver_port = port
     host_dict = {}
     host_dict['10.0.1.20'] = '10.0.1.23'
+    host_dict['10.0.1.23'] = '10.0.1.24'
     host_dict['192.168.50.5'] = '192.168.50.10'
     self.autoguider_host = host_dict[self.scopeserver_host]
     self.autoguider_port = 54040
@@ -168,8 +179,8 @@ class scope_server:
 #    self.dst = 2*3600.0  # Correct for Daylight Savings Time
     self.dst = (2-time.localtime()[8])*3600.0  # Correct for Daylight Savings Time
     self.update_counter = 0
-    self.t_offset = '0.0000'
-    self.t_jitter = '0.0000'
+    self.t_offset = 0.0
+    self.t_jitter = 0.0
 
     try:
       import gpsd
@@ -353,13 +364,18 @@ class scope_server:
     status_dict['site_local_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
     status_dict['site_utc_time'] = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')
 
-    if not self.update_counter%20:
-      self.t_offset, self.t_jitter = [ float(item) for item in subprocess.check_output(['ntpq -p'],shell=True).decode('utf-8').splitlines()[2].split()[8:] ]
+    if not self.update_counter%10:
+      try:
+        self.t_offset, self.t_jitter = [ float(item) for item in subprocess.check_output(['ntpq -p'],shell=True,stderr=subprocess.STDOUT).decode('utf-8').splitlines()[2].split()[8:] ]
+      except:
+        self.t_offset = 0.0
+        self.t_jitter = 0.0
 
+    # Try to reconnect to autoguider
     if self.autoguider_available and not self.autoguider_connected:
       self.autoguider_connect()
 
-    if not self.update_counter%2:
+    if not self.update_counter%1:
       if self.autoguider_connected:
         self.autoguider_get_status()
 
@@ -368,6 +384,7 @@ class scope_server:
     status_dict['t_offset'] = self.t_offset
     status_dict['t_jitter'] = self.t_jitter
 
+    status_dict['gps_status'] = self.gpsd_connected
     status_dict['site_latitude'] = self.site_latitude
     status_dict['site_longitude'] = self.site_longitude
 
@@ -564,17 +581,24 @@ class scope_server:
       # Create a socket (SOCK_STREAM means a TCP socket)
       with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         # Connect to server and send cmd
-        sock.connect((HOST, PORT))
-        t0 = time.time_ns()
-        cmd = cmd_template % (str(t0))
-        sock.sendall(bytes(cmd, "utf-8"))
+        try:
+          sock.settimeout(0.1)
+          sock.connect((HOST, PORT))
+          sock.settimeout(None)
+          t0 = time.time_ns()
+          cmd = cmd_template % (str(t0))
+          sock.sendall(bytes(cmd, 'utf-8'))
 
-        # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
-        t2 = time.time_ns()
+          # Receive response from the server and finish
+          response = str(sock.recv(1024), 'utf-8').split()
+          t2 = time.time_ns()
+        except:
+          response = [] 
+        finally:
+          sock.close()
 
-      if response.split()[0] == 'autoguider_time':
-        t_ag = int(response.split()[1])
+      if len(response):
+        t_ag = int(response[1])
         dt = t2 - t0
         t_diff = (t_ag - dt/2) - t0
         dt_array = np.append(dt_array,dt)
@@ -1093,15 +1117,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'reboot_autoguider':
+    if response == 'ack':
       sys.stderr.write('Autoguider Rebooting...\r\n')
     else:
       sys.stderr.write('Autoguider Reboot Failed\r\n')
@@ -1122,15 +1150,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'shutdown_autoguider':
+    if response == 'ack':
       sys.stderr.write('Autoguider Shutdown...\r\n')
     else:
       sys.stderr.write('Autoguider Shutdown Failed\r\n')
@@ -1145,15 +1177,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'scopeserver_connected':
+    if response == 'ack':
       self.autoguider_available = True
       self.autoguider_connected = True
       if self.verbose:
@@ -1176,12 +1212,14 @@ class scope_server:
         sock.settimeout(0.1)
         sock.connect((HOST, PORT))
         sock.settimeout(None)
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8").split()
+        response = str(sock.recv(1024), 'utf-8').split()
       except:
         response = []
+      finally:
+        sock.close()
 
     if len(response):
       self.autoguider_connected = True
@@ -1212,15 +1250,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'guiding_started':
+    if response == 'ack':
       if self.verbose:
         sys.stderr.write('Autoguider Guiding Started\r\n')
     else:
@@ -1237,15 +1279,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'ack_guiding_stopped':
+    if response == 'ack':
       if self.verbose:
         sys.stderr.write('Autoguider Guiding Stopped\r\n')
     else:
@@ -1262,15 +1308,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'ack_guide_star_drift':
+    if response == 'ack':
       if self.verbose:
         sys.stderr.write('Autoguider Performing Guide Star Drift\r\n')
     else:
@@ -1357,7 +1407,7 @@ class scope_server:
       # Report Position
       elif k=='p':
         self.motion_q.put(('update_pos', True))
-#        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # WiFi connect with Autoguider
       elif k=='w':
@@ -1435,7 +1485,7 @@ class scope_server:
     elif cmd == 'autoguider_connect':
       self.autoguider_available = True
       self.autoguider_connected = True
-      response = 'autoguider_connected'
+      response = 'ack'
       if self.verbose:
         sys.stderr.write('Autoguider Connected\r\n')
 
@@ -1453,7 +1503,7 @@ class scope_server:
         self.adj_target_ra_time_array(self.adj_RA)
         self.target_dec_pos += self.dDEC
         self.motion_q.put(('goto_target_start',None))
-      response = 'ack_guide_star_correction'
+      response = 'ack'
 
     elif cmd == 'jog_target_north':
       # Jog tracking by adjusting the goto coordinates
@@ -1464,7 +1514,7 @@ class scope_server:
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_north'
+      response = 'ack'
 
     elif cmd == 'jog_target_south':
       # Jog tracking by adjusting the goto coordinates
@@ -1475,7 +1525,7 @@ class scope_server:
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_south'
+      response = 'ack'
 
     elif cmd == 'jog_target_east':
       # Jog tracking by adjusting the goto coordinates
@@ -1486,7 +1536,7 @@ class scope_server:
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_east'
+      response = 'ack'
 
     elif cmd == 'jog_target_west':
       # Jog tracking by adjusting the goto coordinates
@@ -1497,7 +1547,7 @@ class scope_server:
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_west'
+      response = 'ack'
 
     elif cmd == 'get_scopeserver_time':
       self.autoguider_available = True

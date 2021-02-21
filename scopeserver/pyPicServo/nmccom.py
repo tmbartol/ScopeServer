@@ -520,7 +520,7 @@ class NmcNet():
     self.modules = {}
 
 
-  def Initialize(self, module_names = None, port = '/dev/ttyUSB0', baudrate = 19200, timeout = 0.02, max_tries = 5):
+  def Initialize(self, module_names = None, port = '/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_AI04OIW1-if00-port0', baudrate = 19200, timeout = 0.02, max_tries = 5):
 
     # Starting from an unknown state, reset NMC network back to power-up state 
     # This is accomplished by scanning baud rates and sending the SimpleReset command

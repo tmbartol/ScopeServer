@@ -1,21 +1,9 @@
 from django.shortcuts import render
 from django.http import JsonResponse
-from pdb import set_trace as debug
 
 # Create your views here.
 
-import os
-import sys
 import socket
-import subprocess as sp
-import glob
-import time
-import datetime
-from io import BytesIO
-import base64
-from PIL import Image
-import random
-import traceback
 
 
 # Get IP address
@@ -29,36 +17,38 @@ def get_ip(iface = 'wlan0'):
   return ip
 
 
+scopeserver_host = get_ip()
+scopeserver_port = 54030
+host_dict = {}
+host_dict['10.0.1.20'] = '10.0.1.23'
+host_dict['10.0.1.23'] = '10.0.1.24'
+host_dict['192.168.50.5'] = '192.168.50.10'
+autoguider_host = host_dict[scopeserver_host]
+autoguider_port = 54040
+autoguider_ud_port = 54050
+
+
 # Send a command to scope_server socket and receive response
 def send_scopeserver_cmd(cmd):
-#  HOST, PORT = "0.0.0.0", 4030
-#  HOST, PORT = "10.0.1.14", 4030
-#  HOST, PORT = "192.168.50.5", 4030
-#  HOST, PORT = "10.0.1.15", 4030
-#  HOST, PORT = "169.254.135.86", 4030
-
-  scopeserver_host = get_ip()
-  scopeserver_port = 54030
-  host_dict = {}
-  host_dict['10.0.1.20'] = '10.0.1.23'
-  host_dict['192.168.50.5'] = '192.168.50.10'
-  autoguider_host = host_dict[scopeserver_host]
-  autoguider_port = 54040
-  autoguider_ud_port = 54050
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   scope_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+  response = ''
   try:
       # Connect to server and send data
+      scope_socket.settimeout(0.1)
       scope_socket.connect((scopeserver_host, scopeserver_port))
+      scope_socket.settimeout(None)
       scope_socket.sendall(cmd.encode('utf-8'))
 
       # Receive data from the server and shut down
       response = scope_socket.recv(1024).decode('utf-8')
   except:
-      tracebackStr = traceback.format_exc()
-      raise(Exception("ScopeServer not found at {0}:{1}\n\n{2}".format(HOST, PORT, tracebackStr)))  #This is new. 
+#      import traceback
+#      tracebackStr = traceback.format_exc()
+#      raise(Exception("ScopeServer not found at {0}:{1}\n\n{2}".format(HOST, PORT, tracebackStr)))  #This is new. 
+      pass
   finally:
       scope_socket.close()
 #  print("Sent:     {}".format(cmd))
@@ -69,15 +59,11 @@ def send_scopeserver_cmd(cmd):
 # Send a command to autoguider socket and receive response
 def send_autoguider_cmd(cmd):
 
-  scopeserver_host = get_ip()
-  scopeserver_port = 54030
-  host_dict = {}
-  host_dict['10.0.1.20'] = '10.0.1.23'
-  host_dict['192.168.50.5'] = '192.168.50.10'
-  autoguider_host = host_dict[scopeserver_host]
-  autoguider_port = 54040
-  autoguider_ud_port = 54050
   buf_size = int(2**16)
+#  buf_size = 2**16
+#  buf_size = 2**13
+#  buf_size = 2**12
+#  buf_size = 1024
 
   # Create a socket (SOCK_STREAM means a TCP socket)
   guider_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -85,24 +71,31 @@ def send_autoguider_cmd(cmd):
   response = ''
   try:
     # Connect to server and send data
-    guider_socket.settimeout(0.5)
+    guider_socket.settimeout(0.1)
     guider_socket.connect((autoguider_host, autoguider_port))
     guider_socket.settimeout(None)
     guider_socket.sendall(cmd.encode('utf-8'))
 
     # Receive data from the server and shut down
-    response = guider_socket.recv(buf_size).decode('utf-8')
+    response = guider_socket.recv(1024).decode('utf-8')
     if cmd == '{get_view}':
       length = int(response) 
       response = b''
       while len(response) < length:
         # doing it in batches is generally better than trying
-        # to do it all in one go, so I believe.
+        # to do it all in one go
         to_read = length - len(response)
         response += guider_socket.recv(buf_size if to_read > buf_size else to_read)
+#      print('get_view received: %d' % (length))
       response = response.decode('utf-8')
+      ack = 'ack'
+      guider_socket.sendall(ack.encode('utf-8'))
+      guider_socket.close()
+    else:
+      if response != 'ack':
+        response = ''
   except:
-    pass
+    response = ''
   finally:
     guider_socket.close()
   return response  #Response will be None if there is an exception. 
@@ -111,22 +104,13 @@ def send_autoguider_cmd(cmd):
 # Send a command to autoguider updown server socket and receive response
 def send_autoguider_ud_cmd(cmd):
 
-  scopeserver_host = get_ip()
-  scopeserver_port = 54030
-  host_dict = {}
-  host_dict['10.0.1.20'] = '10.0.1.23'
-  host_dict['192.168.50.5'] = '192.168.50.10'
-  autoguider_host = host_dict[scopeserver_host]
-  autoguider_port = 54040
-  autoguider_ud_port = 54050
-
   # Create a socket (SOCK_STREAM means a TCP socket)
   updown_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
   response = ''
   try:
     # Connect to server and send data
-    updown_socket.settimeout(0.5)
+    updown_socket.settimeout(0.1)
     updown_socket.connect((autoguider_host, autoguider_ud_port))
     updown_socket.settimeout(None)
     updown_socket.sendall(cmd.encode('utf-8'))
@@ -145,7 +129,7 @@ def control(request):
   if request.is_ajax():
     result = {}
     slew = request.POST.get("slew")
-    print(slew)
+#    print(slew)
     if slew:
       mouse = (request.POST.get("mouse") == "mousedown") or (request.POST.get("mouse") == "touchstart")
 
@@ -204,40 +188,16 @@ def control(request):
       result['status'] = "Success"
       return(JsonResponse(result))
 
-    ''' This is the toggle method
-    if slew:
-      mouse = request.POST.get("mouse") == "mousedown"
-
-      if slew == "slew_north":
-        print("Toggle Slew North")
-        response = send_scopeserver_cmd('{toggle_slew_north}')
-
-      elif slew == "slew_south":
-        print("Toggle Slew South")
-        response = send_scopeserver_cmd('{toggle_slew_south}')
-
-      elif slew == "slew_east":
-        print("Toggle Slew East")
-        response = send_scopeserver_cmd('{toggle_slew_east}')
-
-      elif slew == "slew_west":
-        print("Toggle Slew West")
-        response = send_scopeserver_cmd('{toggle_slew_west}')
-
-      elif slew == "slew_track":
-          print("Toggle Guide Mode")
-          response = send_scopeserver_cmd('{toggle_slew_track}')
-
-      result['status'] = "Success"
-      return(JsonResponse(result))
-    '''
 
     action = request.POST.get("action", "")
     try:
       if action == "serverStatus":
         scope_status = send_scopeserver_cmd('{get_status}')
         status_dict = eval(scope_status)
-        result['#gps_location_lat'] = '%.5f' % (status_dict['site_latitude'])
+        if status_dict['gps_status']:
+          result['#gps_location_lat'] = '%.5f -- GPS Fix' % (status_dict['site_latitude'])
+        else:
+          result['#gps_location_lat'] = '%.5f -- No GPS Fix' % (status_dict['site_latitude'])
         result['#gps_location_lon'] = '%.5f' % (status_dict['site_longitude'])
         lt = status_dict['site_local_time']
         lt1 = lt[:-6]
@@ -268,8 +228,10 @@ def control(request):
         result['#autoguider_interval_val'] = '%s' % (status_dict['autoguider_interval_val_str'])
         result['#autoguider_interval_val_str'] = '%s' % (status_dict['autoguider_interval_val_str'])
 
-        if lt2=='0':
-          result['#guider_view'] = send_autoguider_cmd('{get_view}')
+#        Get View on the whole second.
+#        if lt2=='0':
+#          result['#guider_view'] = send_autoguider_cmd('{get_view}')
+        result['#guider_view'] = send_autoguider_cmd('{get_view}')
 
         result['status'] = "Success"
       elif action == "set_gamma_val":
@@ -296,22 +258,6 @@ def control(request):
         print("Toggle Imaging")
         response = send_autoguider_cmd('{toggle_imaging}')
         result['status'] = "Success"
-      elif action == "gamma_minus":
-        print("Gamma Minus")
-        response = send_autoguider_cmd('{gamma_minus}')
-        result['status'] = "Success"
-      elif action == "gamma_plus":
-        print("Gamma Plus")
-        response = send_autoguider_cmd('{gamma_plus}')
-        result['status'] = "Success"
-      elif action == "bp_minus":
-        print("BlackPoint Minus")
-        response = send_autoguider_cmd('{bp_minus}')
-        result['status'] = "Success"
-      elif action == "bp_plus":
-        print("BlackPoint Plus")
-        response = send_autoguider_cmd('{bp_plus}')
-        result['status'] = "Success"
       elif action == "agfind":
         print("Find Guide Star")
         response = send_autoguider_cmd('{find_guide_star}')
@@ -328,19 +274,6 @@ def control(request):
         print("Toggle Analysis")
         response = send_autoguider_cmd('{toggle_analysis}')
         result['status'] = "Success"
-      elif action == "guiderView":
-        result['#guider_view'] = send_autoguider_cmd('{get_view}')
-        result['status'] = "Success"
-        ''' 
-        my_path = os.path.split(os.path.realpath(__file__))[0]
-        img_path = os.path.join(my_path,'autoguider_images')
-        img_fns = sorted(glob.glob(img_path + '/*'))
-        img_fn = random.choice(img_fns)
-        img_buf = BytesIO()
-        Image.open(img_fn).resize((400,300)).convert('L').save(img_buf,"JPEG")
-        result['#guider_view'] = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
-        result['status'] = "Success"
-        ''' 
       elif action == "darv":
         print("Toggle DARV")
         response = send_scopeserver_cmd('{toggle_darv}')
@@ -350,18 +283,26 @@ def control(request):
         response = send_scopeserver_cmd('{meridian_flip}')
         result['status'] = "Success"
       elif action == "gpsreset":
+        import os
+        import time
         print("RESETTING GPS BY BUTTON PRESS")
         time.sleep(1)
         os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_control_gpsreset.sh &')
       elif action == "ssreset":
+        import os
+        import time
         print("RESETTING SCOPE SERVER BY BUTTON PRESS")
         time.sleep(1)
         os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_control_ssreset.sh &')
       elif action == "ssreboot":
+        import subprocess as sp
+        import time
         print("REBOOTING BY BUTTON PRESS")
         time.sleep(1)
         sp.check_output(["sudo reboot"],shell=True)
       elif action == "ssshutdown":
+        import subprocess as sp
+        import time
         print("SHUTTING DOWN BY BUTTON PRESS")
         time.sleep(1)
         sp.check_output(["sudo shutdown now"],shell=True)
@@ -382,6 +323,8 @@ def control(request):
         response = send_autoguider_ud_cmd('{shutdown_autoguider}')
         result['status'] = "Success"
       elif action == "wifi":
+        import os
+        import time
         print("CONNECTING TO WiFi NETWORK")
         time.sleep(1)
         os.system('nohup sudo /home/pi/src/scopeserver-git/scopeserver/scopeserver_force_autohotspot.sh &')
@@ -392,32 +335,7 @@ def control(request):
       return(JsonResponse(result))
   elif request.method == "POST":
     pass
-    '''
-    action = request.POST.get("action")
-    if action == "reboot":
-      print("REBOOTING BY BUTTON PRESS")
-      time.sleep(1)
-      sp.check_output(["sudo reboot"],shell=True)
-    elif action == "shutdown":
-      print("SHUTTING DOWN BY BUTTON PRESS")
-      time.sleep(1)
-      sp.check_output(["sudo shutdown now"],shell=True)
-    '''
 
-  '''
-  my_path = os.path.split(os.path.realpath(__file__))[0]
-  img_path = os.path.join(my_path,'autoguider_images')
-  img_fns = sorted(glob.glob(img_path + '/*'))
-  img_fn = random.choice(img_fns)
-
-  context = {}
-  img_in_memory = BytesIO()
-#  img_fn = os.path.join(my_path,'autoguider_images/image_seq_0000.1580619295.3932567.jpg')
-  img = Image.open(img_fn)
-  img = img.resize((400,300))
-  img.save(img_in_memory, format="JPEG")
-  context['image'] = base64.b64encode(img_in_memory.getvalue())
-  '''
 
 #  return(render(request, "server/control.html", locals()))
 #  return(render(request, "server/control.html", context))
