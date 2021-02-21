@@ -25,3 +25,6 @@ sleep 60
 
 systemctl start scopeserver_control.service
 systemctl start scopeserver_webapp.service
+
+# Experimental method to force autohotspot on next start of autohotspot.service
+#sudo cp /etc/wpa_supplicant/wpa_supplicant.conf.on /etc/wpa_supplicant/wpa_supplicant.conf

@@ -162,6 +162,21 @@ button.actionbutton {
     </div>
   </div>
 
+  <div id="CamAdj" class="tabcontent">
+    <div class="button_bar">
+      <object class="slidecontainer">
+        exposure: <object id="exposure_val_str"></object>
+        <object id="exposure_val"></object>
+      </object>
+    </div>
+    <div class="button_bar">
+      <object class="slidecontainer">
+        autoguider interval: <object id="autoguider_interval_val_str"></object>
+        <object id="autoguider_interval_val"></object>
+      </object>
+    </div>
+  </div>
+
   <!--  Autoguider Action Controls  -->
   <div id="AGCtl" class="tabcontent">
     <div class="button_bar">
@@ -186,6 +201,10 @@ button.actionbutton {
 
   <button class="tablink" onclick="openButtonBar('ImgAdj', this)">
     <span class="glyphicon glyphicon-tasks" aria-hidden="true"></span>
+  </button>
+
+  <button class="tablink" onclick="openButtonBar('CamAdj', this)">
+    <span class="glyphicon glyphicon-camera" aria-hidden="true"></span>
   </button>
 
   <button class="tablink" onclick="openButtonBar('AGCtl', this)">
@@ -240,12 +259,22 @@ function get_scope_status() {
 //                    else if (key.endsWith("_val")) {
                     else if (key == "#gamma_val") {
                         var value = result[key];
-                        var slider_html = '<input name="set_gamma_val" class="slider actionslider" type="range" min="1" max="5" step="0.5" value="' + value + '">';
+                        var slider_html = '<input name="set_gamma_val" class="slider actionslider" type="range" min="1" max="10" step="0.5" value="' + value + '">';
                         $(key).html(slider_html);
                     }
                     else if (key == "#bp_val") {
                         var value = result[key];
                         var slider_html = '<input name="set_bp_val" class="slider actionslider" type="range" min="0" max="20" step="1" value="' + value + '">';
+                        $(key).html(slider_html);
+                    }
+                    else if (key == "#exposure_val") {
+                        var value = result[key];
+                        var slider_html = '<input name="set_exposure_val" class="slider actionslider" type="range" min="0.1" max="3" step="0.1" value="' + value + '">';
+                        $(key).html(slider_html);
+                    }
+                    else if (key == "#autoguider_interval_val") {
+                        var value = result[key];
+                        var slider_html = '<input name="set_autoguider_interval_val" class="slider actionslider" type="range" min="1" max="3" step="0.5" value="' + value + '">';
                         $(key).html(slider_html);
                     }
                     else if (key != "status") {
@@ -371,7 +400,7 @@ function get_scope_status() {
 
 <!-- Set Interval to call get_scope_status -->
 <script>
-  var interval_scope_status = setInterval(get_scope_status, 500);
+  var interval_scope_status = setInterval(get_scope_status, 1000);
 </script>
 
 {% endblock %}

@@ -99,17 +99,28 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 #              sys.stderr.write('Server responding:  %s\r\n' % (response.encode('utf-8')))
               self.request.sendall(response.encode('utf-8'))
         else:
+          self.request.close()
           return
-    except ConnectionResetError:
-      sys.stderr.write('Connection reset by peer.\r\n')
+    except Exception as e:
+      '''
+      sys.stderr.write('Exception in Autoguider TCP Command Processor.\r\n')
+      sys.stderr.write('  cmd:  %s\r\n' % (str(cmd)))
+      if hasattr(e, 'message'):
+        sys.stderr.write('    %s\r\n' % (str(e.message)))
+      else:
+        sys.stderr.write('    %s\r\n' % (str(e)))
+      '''
       pass
+    finally:
+      self.request.close()
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
   allow_reuse_address = True
-  daemon_threads = True
+#  daemon_threads = True
+  daemon_threads = False
   timeout = None
-  request_queue_size = 20
+  request_queue_size = 100
 
 
 ###############################
@@ -121,6 +132,7 @@ class scope_server:
   def __init__(self, server_address, port, scope_mode = 'REAL_SCOPE'):
     global nmc_net
     self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
+    self.verbose = False
     self.input_running = False
     self.server_running = False
     self.motion_q = queue.Queue(maxsize=0)
@@ -130,6 +142,7 @@ class scope_server:
     self.scopeserver_port = port
     host_dict = {}
     host_dict['10.0.1.20'] = '10.0.1.23'
+    host_dict['10.0.1.23'] = '10.0.1.24'
     host_dict['192.168.50.5'] = '192.168.50.10'
     self.autoguider_host = host_dict[self.scopeserver_host]
     self.autoguider_port = 54040
@@ -141,6 +154,8 @@ class scope_server:
     self.autoguider_img_count = 0
     self.autoguider_gamma = 1.0
     self.autoguider_bp = 0
+    self.autoguider_exposure = 1.0
+    self.autoguider_interval = 1.0
 
     self.ra_axis_running = False
     self.dec_axis_running = False
@@ -164,8 +179,8 @@ class scope_server:
 #    self.dst = 2*3600.0  # Correct for Daylight Savings Time
     self.dst = (2-time.localtime()[8])*3600.0  # Correct for Daylight Savings Time
     self.update_counter = 0
-    self.t_offset = '0.0000'
-    self.t_jitter = '0.0000'
+    self.t_offset = 0.0
+    self.t_jitter = 0.0
 
     try:
       import gpsd
@@ -349,13 +364,18 @@ class scope_server:
     status_dict['site_local_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')
     status_dict['site_utc_time'] = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S.%f')
 
-    if not self.update_counter%20:
-      self.t_offset, self.t_jitter = [ float(item) for item in subprocess.check_output(['ntpq -p'],shell=True).decode('utf-8').splitlines()[2].split()[8:] ]
+    if not self.update_counter%10:
+      try:
+        self.t_offset, self.t_jitter = [ float(item) for item in subprocess.check_output(['ntpq -p'],shell=True,stderr=subprocess.STDOUT).decode('utf-8').splitlines()[2].split()[8:] ]
+      except:
+        self.t_offset = 0.0
+        self.t_jitter = 0.0
 
+    # Try to reconnect to autoguider
     if self.autoguider_available and not self.autoguider_connected:
       self.autoguider_connect()
 
-    if not self.update_counter%2:
+    if not self.update_counter%1:
       if self.autoguider_connected:
         self.autoguider_get_status()
 
@@ -364,6 +384,7 @@ class scope_server:
     status_dict['t_offset'] = self.t_offset
     status_dict['t_jitter'] = self.t_jitter
 
+    status_dict['gps_status'] = self.gpsd_connected
     status_dict['site_latitude'] = self.site_latitude
     status_dict['site_longitude'] = self.site_longitude
 
@@ -402,6 +423,8 @@ class scope_server:
     status_dict['autoguider_status'] = '%s %d' % (self.autoguider_status, self.autoguider_img_count)
     status_dict['gamma_val_str'] = '%g' % (self.autoguider_gamma)
     status_dict['bp_val_str'] = '%g' % (self.autoguider_bp)
+    status_dict['exposure_val_str'] = '%g' % (self.autoguider_exposure)
+    status_dict['autoguider_interval_val_str'] = '%g' % (self.autoguider_interval)
 
     return status_dict
 
@@ -445,7 +468,8 @@ class scope_server:
     pos = self.meridian_mode*(self.res_dec - (self.res_dec*dec_angle/360.0))%self.res_dec
     if pos > (self.res_dec/2):
        pos = pos - self.res_dec
-    sys.stderr.write('Target Dec Angle: %s  pos %.9g\r\n' % (dec_angle_str, pos))
+    if self.verbose:
+      sys.stderr.write('Target Dec Angle: %s  pos %.9g\r\n' % (dec_angle_str, pos))
     return (pos)
     
 
@@ -475,7 +499,8 @@ class scope_server:
     self.target_ra_time_array.append(int(ra_time[1]))
     self.target_ra_time_array.append(float(ra_time[2]))
     pos = self.ra_time_array_to_pos(self.target_ra_time_array)
-    sys.stderr.write('Target RA: %s  pos %.9g\r\n' % (ra_time_str, pos))
+    if self.verbose:
+      sys.stderr.write('Target RA: %s  pos %.9g\r\n' % (ra_time_str, pos))
     return
 
 
@@ -488,7 +513,8 @@ class scope_server:
     ss = 60*abs(rem - mm)
     self.target_ra_time_array = [hh,mm,ss]
     pos = self.ra_time_array_to_pos(self.target_ra_time_array)
-    sys.stderr.write('Adjusted Target RA: %s  pos %.9g\r\n' % (str(self.target_ra_time_array), pos))
+    if self.verbose:
+      sys.stderr.write('Adjusted Target RA: %s  pos %.9g\r\n' % (str(self.target_ra_time_array), pos))
     return
 
 
@@ -555,17 +581,24 @@ class scope_server:
       # Create a socket (SOCK_STREAM means a TCP socket)
       with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         # Connect to server and send cmd
-        sock.connect((HOST, PORT))
-        t0 = time.time_ns()
-        cmd = cmd_template % (str(t0))
-        sock.sendall(bytes(cmd, "utf-8"))
+        try:
+          sock.settimeout(0.1)
+          sock.connect((HOST, PORT))
+          sock.settimeout(None)
+          t0 = time.time_ns()
+          cmd = cmd_template % (str(t0))
+          sock.sendall(bytes(cmd, 'utf-8'))
 
-        # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
-        t2 = time.time_ns()
+          # Receive response from the server and finish
+          response = str(sock.recv(1024), 'utf-8').split()
+          t2 = time.time_ns()
+        except:
+          response = [] 
+        finally:
+          sock.close()
 
-      if response.split()[0] == 'autoguider_time':
-        t_ag = int(response.split()[1])
+      if len(response):
+        t_ag = int(response[1])
         dt = t2 - t0
         t_diff = (t_ag - dt/2) - t0
         dt_array = np.append(dt_array,dt)
@@ -575,8 +608,9 @@ class scope_server:
       
     dt = dt_array*1e-9
     t_diff = t_diff_array*1e-9
-    sys.stderr.write('\r\ndt = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (dt.mean(),dt.min(),dt.max(),dt.std()))
-    sys.stderr.write('t_diff = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (t_diff.mean(),t_diff.min(),t_diff.max(),t_diff.std()))
+    if self.verbose:
+      sys.stderr.write('\r\ndt = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (dt.mean(),dt.min(),dt.max(),dt.std()))
+      sys.stderr.write('t_diff = %.4g (min:%.4g max:%.4g stddev:+-%.4g)\r\n' % (t_diff.mean(),t_diff.min(),t_diff.max(),t_diff.std()))
 
 
   # Start thread for motion control
@@ -678,7 +712,8 @@ class scope_server:
           self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, -360*self.degree_counts_ra, self.servo_sidereal_rate, self.servo_accel, 0)
 
       elif cmd == 'ra_slew_start':
-        sys.stderr.write('motion_control: RA slew start\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: RA slew start\r\n')
         # RA Slew at slew rate
         self.ra_axis_running = True
         # RA Servo On
@@ -692,7 +727,8 @@ class scope_server:
         self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*360*self.degree_counts_ra, servo_slew_rate, self.servo_accel, 0)
 
       elif cmd == 'ra_slew_stop':
-        sys.stderr.write('motion_control: RA slew stop\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: RA slew stop\r\n')
         # RA Smooth Stop
         if self.ra_axis_running | self.ra_axis_tracking:
           self.ra_mod.ServoStopSmooth()
@@ -702,7 +738,8 @@ class scope_server:
           self.motion_q.put(('autoguider_guide_stop', None))
 
       elif cmd == 'ra_track_start':
-        sys.stderr.write('motion_control: RA track start\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: RA track start\r\n')
         # Slew RA at sidereal rate
         self.ra_axis_tracking = True
         # Servo On
@@ -725,7 +762,8 @@ class scope_server:
 
 
       elif cmd == 'ra_track_stop':
-        sys.stderr.write('motion_control: RA track stop\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: RA track stop\r\n')
         # RA Smooth Stop
         if self.ra_axis_running | self.ra_axis_tracking:
           self.ra_mod.ServoStopSmooth()
@@ -735,7 +773,8 @@ class scope_server:
           self.motion_q.put(('autoguider_guide_stop', None))
 
       elif cmd == 'ra_darv_pause':
-        sys.stderr.write('motion_control: RA DARV Pause start\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: RA DARV Pause start\r\n')
         # Slew RA at sidereal rate
         self.ra_axis_running = True
         self.ra_axis_darv_pause = True
@@ -753,7 +792,8 @@ class scope_server:
         self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.ra_axis_darv_end_pos, servo_darv_rate, self.servo_accel, 0)
 
       elif cmd == 'ra_darv_east':
-        sys.stderr.write('motion_control: RA DARV East start\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: RA DARV East start\r\n')
         # Slew RA at sidereal rate
         self.ra_axis_running = True
         self.ra_axis_darv_east = True
@@ -773,7 +813,8 @@ class scope_server:
         self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.ra_axis_darv_end_pos, servo_darv_rate, self.servo_accel, 0)
 
       elif cmd == 'ra_darv_west':
-        sys.stderr.write('motion_control: RA DARV West start\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: RA DARV West start\r\n')
         # Slew RA at sidereal rate
         self.ra_axis_running = True
         self.ra_axis_darv_west = True
@@ -793,7 +834,8 @@ class scope_server:
         self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, self.ra_axis_darv_end_pos, servo_darv_rate, self.servo_accel, 0)
 
       elif cmd == 'dec_slew_start':
-        sys.stderr.write('motion_control: Dec slew start\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: Dec slew start\r\n')
         # Dec Slew at slew rate
         self.dec_axis_running = True
         # Dec Servo On
@@ -806,7 +848,8 @@ class scope_server:
         self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, cmd_arg*360*self.degree_counts_dec, self.servo_dec_slew_rate, self.servo_accel, 0)
 
       elif cmd == 'dec_slew_stop':
-        sys.stderr.write('motion_control: Dec slew stop\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: Dec slew stop\r\n')
         # Dec Smooth Stop
         if self.dec_axis_running:
           self.dec_mod.ServoStopSmooth()
@@ -814,7 +857,8 @@ class scope_server:
           self.dec_mod.ServoStopMotorOff()
 
       elif cmd == 'goto_target_start':
-        sys.stderr.write('motion_control: GOTO target start\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: GOTO target start\r\n')
         self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
         ra_distance = self.target_ra_pos - self.pos_ra
         ra_dir = 1.0-2.0*(ra_distance<0)
@@ -832,8 +876,8 @@ class scope_server:
         target_distance = math.sqrt(ra_distance**2 + dec_distance**2)
         ra_speed = abs(ra_distance/target_distance)
         dec_speed = abs(dec_distance/target_distance)
-        servo_ra_goto_rate = int(ra_speed*self.slew_rate*0.000512*2**16)
-        servo_dec_goto_rate = int(dec_speed*self.slew_rate*0.000512*2**16)
+        self.servo_ra_goto_rate = int(ra_speed*self.slew_rate*0.000512*2**16)
+        self.servo_dec_goto_rate = int(dec_speed*self.slew_rate*0.000512*2**16)
 
         # RA GOTO Target at goto rate
         self.ra_axis_running = True
@@ -857,11 +901,12 @@ class scope_server:
         self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
         self.dec_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
 
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), servo_ra_goto_rate, self.servo_accel, 0)
-        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), servo_dec_goto_rate, self.servo_accel, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_goto_rate, self.servo_accel, 0)
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), self.servo_dec_goto_rate, self.servo_accel, 0)
 
       elif cmd == 'goto_target_stop':
-        sys.stderr.write('motion_control: GOTO target stop\r\n')
+        if self.verbose:
+          sys.stderr.write('motion_control: GOTO target stop\r\n')
 
       elif cmd == 'align_to_target':
         if not self.motion_running:
@@ -876,7 +921,8 @@ class scope_server:
           self.dec_mod.ServoSetPos(int(pos_dec))
           self.pos_ra = self.ra_mod.ServoGetPos()
           self.pos_dec = self.dec_mod.ServoGetPos()
-          sys.stderr.write('Aligned servo to target at:  pos_ra: %d   pos_dec: %d\r\n' % (self.pos_ra, self.pos_dec))
+          if self.verbose:
+            sys.stderr.write('Aligned servo to target at:  pos_ra: %d   pos_dec: %d\r\n' % (self.pos_ra, self.pos_dec))
           if cmd_arg:
             self.motion_q.put(('ra_track_start', None))
 
@@ -884,15 +930,17 @@ class scope_server:
         self.pos_ra = self.ra_mod.ServoGetPos()
         self.pos_dec = self.dec_mod.ServoGetPos()
         if cmd_arg:
-          sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          if self.verbose:
+            sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
 
 #  Monitor and respond to motion dynamics:  
 
       if self.ra_axis_goto:
-        # Update RA GOTO Target
+        # Update RA GOTO Target which has moved during the GOTO slewing
         if self.ra_mod.module_error:
-          sys.stderr.write('RA Drive Controller Error!!!\r\n')
+          if self.verbose:
+            sys.stderr.write('RA Drive Controller Error!!!\r\n')
           # Servo Off
           self.ra_mod.ServoStopMotorOff()
           self.ra_mod.ClearBits()
@@ -914,18 +962,20 @@ class scope_server:
             if target_ra_delta > self.target_epsilon_1:
               # Move at current slew rate until we're within target_epsilon_1
               self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
-              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+              # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_goto_rate, self.servo_accel, 0)
               # sys.stderr.write('Slewing to within target_epsilon_1: %d\r\n' % (target_ra_delta))
             else:
               # Move at correction slew rate until we're within target_epsilon_2
-              self.ra_mod.ServoSetGain(self.Kp_s, self.Kd_s, self.Ki_s, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
+              # self.ra_mod.ServoSetGain(self.Kp_s, self.Kd_s, self.Ki_s, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
               self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_correction_rate, self.servo_correction_accel, 0)
               # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
               # sys.stderr.write('Slewing to within target_epsilon_2: %d\r\n' % (target_ra_delta))
 
       if self.ra_axis_running | self.ra_axis_tracking:
         if self.ra_mod.module_error:
-          sys.stderr.write('RA Drive Controller Error!!!\r\n')
+          if self.verbose:
+            sys.stderr.write('RA Drive Controller Error!!!\r\n')
           # Servo Off
           self.ra_mod.ServoStopMotorOff()
           self.ra_mod.ClearBits()
@@ -966,7 +1016,8 @@ class scope_server:
 
       if self.dec_axis_running:
         if self.dec_mod.module_error:
-          sys.stderr.write('Dec Drive Controller Error!!!\r\n')
+          if self.verbose:
+            sys.stderr.write('Dec Drive Controller Error!!!\r\n')
           # Servo Off
           self.dec_mod.ServoStopMotorOff()
           self.dec_mod.ClearBits()
@@ -1066,15 +1117,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'reboot_autoguider':
+    if response == 'ack':
       sys.stderr.write('Autoguider Rebooting...\r\n')
     else:
       sys.stderr.write('Autoguider Reboot Failed\r\n')
@@ -1095,15 +1150,19 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'shutdown_autoguider':
+    if response == 'ack':
       sys.stderr.write('Autoguider Shutdown...\r\n')
     else:
       sys.stderr.write('Autoguider Shutdown Failed\r\n')
@@ -1118,21 +1177,27 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'scopeserver_connected':
+    if response == 'ack':
       self.autoguider_available = True
       self.autoguider_connected = True
-      sys.stderr.write('Autoguider Connected\r\n')
+      if self.verbose:
+        sys.stderr.write('Autoguider Connected\r\n')
     else:
       self.autoguider_connected = False
-      sys.stderr.write('Autoguider Not Connected\r\n')
+      if self.verbose:
+        sys.stderr.write('Autoguider Not Connected\r\n')
 
 
   def autoguider_get_status(self):
@@ -1147,12 +1212,14 @@ class scope_server:
         sock.settimeout(0.1)
         sock.connect((HOST, PORT))
         sock.settimeout(None)
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8").split()
+        response = str(sock.recv(1024), 'utf-8').split()
       except:
         response = []
+      finally:
+        sock.close()
 
     if len(response):
       self.autoguider_connected = True
@@ -1160,6 +1227,8 @@ class scope_server:
       self.autoguider_img_count = int(response[1])
       self.autoguider_gamma = float(response[2])
       self.autoguider_bp = int(response[3])
+      self.autoguider_exposure = float(response[4])
+      self.autoguider_interval = float(response[5])
 #      sys.stderr.write('Autoguider Connected\r\n')
     else:
       self.autoguider_connected = False
@@ -1167,6 +1236,8 @@ class scope_server:
       self.autoguider_img_count = 0
       self.autoguider_gamma = 1.0
       self.autoguider_bp = 0
+      self.autoguider_exposure = 1.0
+      self.autoguider_interval = 1.0 
 #      sys.stderr.write('Autoguider Not Connected\r\n')
 
 
@@ -1179,18 +1250,24 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'guiding_started':
-      sys.stderr.write('Autoguider Guiding Started\r\n')
+    if response == 'ack':
+      if self.verbose:
+        sys.stderr.write('Autoguider Guiding Started\r\n')
     else:
-      sys.stderr.write('Autoguider Error: Could Not Start Guiding\r\n')
+      if self.verbose:
+        sys.stderr.write('Autoguider Error: Could Not Start Guiding\r\n')
 
 
   def autoguider_guide_stop(self):
@@ -1202,18 +1279,24 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'ack_guiding_stopped':
-      sys.stderr.write('Autoguider Guiding Stopped\r\n')
+    if response == 'ack':
+      if self.verbose:
+        sys.stderr.write('Autoguider Guiding Stopped\r\n')
     else:
-      sys.stderr.write('Autoguider Error: Could Not Stop Guiding\r\n')
+      if self.verbose:
+        sys.stderr.write('Autoguider Error: Could Not Stop Guiding\r\n')
 
 
   def autoguider_guide_star_drift(self):
@@ -1225,18 +1308,24 @@ class scope_server:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
-        sock.sendall(bytes(cmd, "utf-8"))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
 
         # Receive response from the server and finish
-        response = str(sock.recv(1024), "utf-8")
+        response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
-    if response == 'ack_guide_star_drift':
-      sys.stderr.write('Autoguider Performing Guide Star Drift\r\n')
+    if response == 'ack':
+      if self.verbose:
+        sys.stderr.write('Autoguider Performing Guide Star Drift\r\n')
     else:
-      sys.stderr.write('Autoguider Error: Could Not Perform Guide Star Drift: \r\n' % (response))
+      if self.verbose:
+        sys.stderr.write('Autoguider Error: Could Not Perform Guide Star Drift: \r\n' % (response))
 
 
 
@@ -1318,7 +1407,7 @@ class scope_server:
       # Report Position
       elif k=='p':
         self.motion_q.put(('update_pos', True))
-#        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        sys.stderr.write('  Current Pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # WiFi connect with Autoguider
       elif k=='w':
@@ -1396,8 +1485,9 @@ class scope_server:
     elif cmd == 'autoguider_connect':
       self.autoguider_available = True
       self.autoguider_connected = True
-      response = 'autoguider_connected'
-      sys.stderr.write('Autoguider Connected\r\n')
+      response = 'ack'
+      if self.verbose:
+        sys.stderr.write('Autoguider Connected\r\n')
 
     # Autoguider toggle autoengage
     elif cmd == 'toggle_autoguider_auto':
@@ -1407,35 +1497,35 @@ class scope_server:
       if self.autoguider_guiding:
         # Perform guide_star_correction by adjusting the goto coordinates
         self.dRA = -int(cmd.split()[1])
-        self.dDEC = int(cmd.split()[2])
+        self.dDEC = int(cmd.split()[2])*self.meridian_mode
         self.adj_RA = self.dRA/self.sidereal_rate
         self.guide_correction_pending = True
         self.adj_target_ra_time_array(self.adj_RA)
         self.target_dec_pos += self.dDEC
         self.motion_q.put(('goto_target_start',None))
-      response = 'ack_guide_star_correction'
+      response = 'ack'
 
     elif cmd == 'jog_target_north':
       # Jog tracking by adjusting the goto coordinates
       self.dRA = 0
-      self.dDEC = 3334  # ~240 arcsec
+      self.dDEC = 3334*self.meridian_mode  # ~240 arcsec
       self.adj_RA = self.dRA/self.sidereal_rate
       self.guide_correction_pending = True
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_north'
+      response = 'ack'
 
     elif cmd == 'jog_target_south':
       # Jog tracking by adjusting the goto coordinates
       self.dRA = 0
-      self.dDEC = -3334  # ~240 arcsec
+      self.dDEC = -3334*self.meridian_mode  # ~240 arcsec
       self.adj_RA = self.dRA/self.sidereal_rate
       self.guide_correction_pending = True
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_south'
+      response = 'ack'
 
     elif cmd == 'jog_target_east':
       # Jog tracking by adjusting the goto coordinates
@@ -1446,7 +1536,7 @@ class scope_server:
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_east'
+      response = 'ack'
 
     elif cmd == 'jog_target_west':
       # Jog tracking by adjusting the goto coordinates
@@ -1457,7 +1547,7 @@ class scope_server:
       self.adj_target_ra_time_array(self.adj_RA)
       self.target_dec_pos += self.dDEC
       self.motion_q.put(('goto_target_start',None))
-      response = 'ack_jog_target_west'
+      response = 'ack'
 
     elif cmd == 'get_scopeserver_time':
       self.autoguider_available = True
@@ -1497,7 +1587,8 @@ class scope_server:
     elif cmd == 'toggle_slew_track':
       if not self.ra_axis_tracking:
         # Start RA axis tracking
-        sys.stderr.write('  Start Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        if self.verbose:
+          sys.stderr.write('  Start Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
         ra_time_str = self.get_ra_time()
         self.target_ra_time = ra_time_str
         self.set_target_ra_time_array(ra_time_str)
@@ -1512,17 +1603,20 @@ class scope_server:
         self.motion_q.put(('ra_track_stop', None))
         if self.dec_axis_running:
           self.motion_q.put(('dec_slew_stop', None))
-        sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        if self.verbose:
+          sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
     elif cmd == 'toggle_darv':
       if self.ra_axis_running:
-        sys.stderr.write('  Canceling Drift Alignment Slew on RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        if self.verbose:
+          sys.stderr.write('  Canceling Drift Alignment Slew on RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
         self.ra_axis_darv_pause = False
         self.ra_axis_darv_east = False
         self.ra_axis_darv_west = False
         self.motion_q.put(('ra_slew_stop', None))
       if self.ra_axis_tracking:
-        sys.stderr.write('  Starting Drift Alignment Slew on RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        if self.verbose:
+          sys.stderr.write('  Starting Drift Alignment Slew on RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
         self.ra_axis_darv_pause = False
         self.ra_axis_darv_east = False
         self.ra_axis_darv_west = False
@@ -1530,7 +1624,8 @@ class scope_server:
         self.motion_q.put(('ra_darv_pause', None))
 #        self.motion_q.put(('ra_darv_east', None))
       else:
-        sys.stderr.write('  Starting Drift Alignment Slew on RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+        if self.verbose:
+          sys.stderr.write('  Starting Drift Alignment Slew on RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
         self.motion_q.put(('ra_darv_pause', None))
 #        self.motion_q.put(('ra_darv_east', None))
 
@@ -1573,7 +1668,8 @@ class scope_server:
     response = None
 
     if (cmd != ':GD#') & (cmd != ':GR#'):
-      sys.stderr.write('  Processing LX200 cmd: %s\r\n' % (cmd))
+      if self.verbose:
+        sys.stderr.write('  Processing LX200 cmd: %s\r\n' % (cmd))
 
     if cmd == ':GD#':  # Get Dec angle:  sDD*MM'SS#
       self.motion_q.put(('update_pos', None))
