@@ -101,23 +101,40 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 #              sys.stderr.write( 'Server responding:  %s\r\n' % (response) )
 #              sys.stderr.write( 'Server sending:  %d bytes\r\n' % (len(response)) )
               if cmd == 'get_view':
+#                sys.stderr.write( 'get_view at: %d  len: %d\r\n' % (int(time.time()), len(response)) )
                 self.request.sendall( str(len(response)).encode('utf-8') )
               self.request.sendall(response)
+              if cmd == 'get_view':
+                ack = self.request.recv(1024).decode('utf-8')
+                if ack == 'ack':
+#                  sys.stderr.write('  \r\ncmd:  %s  got ack\r\n' % (str(cmd)))
+                  pass
+                else:
+#                  sys.stderr.write('  \r\ncmd:  %s  no ack\r\n' % (str(cmd)))
+                  pass
         else:
+          self.request.close()
           return
-    except:
+    except Exception as e:
+      '''
       sys.stderr.write('Exception in Autoguider TCP Command Processor.\r\n')
+      sys.stderr.write('  cmd:  %s\r\n' % (str(cmd)))
+      if hasattr(e, 'message'):
+        sys.stderr.write('    %s\r\n' % (str(e.message)))
+      else:
+        sys.stderr.write('    %s\r\n' % (str(e)))
+      '''
       pass
-#    except ConnectionResetError:
-#      sys.stderr.write('Connection reset by peer.\r\n')
-#      pass
+    finally:
+      self.request.close()
 
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
   allow_reuse_address = True
-  daemon_threads = True
+#  daemon_threads = True
+  daemon_threads = False
   timeout = None
-  request_queue_size = 20
+  request_queue_size = 100
 
 
 def to_precision(v,p):
@@ -154,6 +171,8 @@ def to_precision(v,p):
 class autoguider:
 
   def __init__(self, server_address, port, sim_img_mode=False):
+    self.verbose = False
+    self.dir_path = os.path.dirname(os.path.realpath(__file__))
     self.input_running = False
     self.server_running = False
     self.capture_continuous = False
@@ -175,33 +194,28 @@ class autoguider:
     self.autoguider_port = port
     host_dict = {}
     host_dict['10.0.1.23'] = '10.0.1.20'
+    host_dict['10.0.1.24'] = '10.0.1.23'
     host_dict['192.168.50.10'] = '192.168.50.5'
     self.scopeserver_host = host_dict[self.autoguider_host]
     self.scopeserver_port = 54030
 
     self.status = 'idle'
-    self.gamma=2.5
-    self.blackpoint=5
+    self.gamma=5.0
+    self.blackpoint=1
 #    self.blackpoint=20
+    self.exposure = 1.0  # exposure time in seconds
+    self.autoguider_interval = 1.0
     self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+    self.cam = None
     self.init_cam()
 
 
   def get_status(self):
-    status_str = '%s %d %g %d' % (self.status, self.img_count, self.gamma, self.blackpoint)
+    status_str = '%s %d %g %d %g %g' % (self.status, self.img_count, self.gamma, self.blackpoint, self.exposure, self.autoguider_interval)
     return status_str
 
 
   def get_view(self):
-    '''
-    my_path = os.path.split(os.path.realpath(__file__))[0]
-    img_path = os.path.join(my_path,'images_2')
-    img_fns = sorted(glob.glob(img_path + '/*'))
-    img_fn = random.choice(img_fns)
-    img_buf = io.BytesIO()
-    Image.open(img_fn).resize((400,300)).convert('L').save(img_buf,"JPEG")
-    self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
-    '''
 
 #    sys.stderr.write('sending guider view:  %d bytes\r\n' % (len(self.guider_view)))
 
@@ -251,7 +265,8 @@ class autoguider:
       self.server_running=False
       sys.stderr.write('AutoGuider shutting down.\r\n')
 
-      self.cam.close()
+      if self.cam != None:
+        self.cam.close()
       self.threaded_server.shutdown()
       self.server_thread.join()
 
@@ -288,8 +303,10 @@ class autoguider:
       cmd = autoguider_cmd[0]
       cmd_arg = autoguider_cmd[1]
 
+      self.cancel_capture_list = ['find_guide_star','guide_start','guide_star_drift','analysis_start','guide_star_drift_analysis']
+
       # Cancel continuous capture as appropriate
-      if cmd != 'capture_one':
+      if cmd in self.cancel_capture_list:
         self.status = 'idle'
         self.capture_continuous = False
 
@@ -305,13 +322,21 @@ class autoguider:
         self.analyzing = False
       '''
 
-      if cmd == 'jog_pos':
-        pass
+      if cmd == 'set_gamma_lut':
+        self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+        self.make_guider_view()
+
+      elif cmd == 'set_exposure':
+        self.status = 'init_cam'
+        if self.cam != None:
+          self.cam.close()
+        self.init_cam()
 
       elif cmd == 'guide_start':
-        sys.stderr.write('Guiding Started...\r\n')
-        self.img_count = 0
         self.status = 'finding_guide_star'
+        if self.verbose:
+          sys.stderr.write('Guiding Started...\r\n')
+        self.img_count = 0
         if self.sim_img_mode:
           self.nightshot_sim()
         else:
@@ -319,14 +344,16 @@ class autoguider:
         self.find_guide_star()
         if self.status == 'found_guide_star':
           self.guiding = True
-          self.correction_log = open('./correction_log.dat','w')
+          logfn = os.path.join(self.dir_path,'correction_log.dat')
+          self.correction_log = open(logfn,'w')
           self.autoguider_q.put(('guide_star_drift', None))
         else:
           self.autoguider_q.put(('guide_stop', None))
 
       elif cmd == 'guide_stop':
-        sys.stderr.write('Guiding Stopped\r\n')
         self.status = 'idle'
+        if self.verbose:
+          sys.stderr.write('Guiding Stopped\r\n')
         self.guiding = False
         if self.correction_log:
           self.correction_log.close()
@@ -353,12 +380,13 @@ class autoguider:
           self.status = 'idle'
 
       elif cmd == 'analysis_start':
-        sys.stderr.write('Drift Analysis Started...\r\n')
+        self.status = 'finding_guide_star'
+        if self.verbose:
+          sys.stderr.write('Drift Analysis Started...\r\n')
         self.img_count = 0
         self.driftRA = 0
         self.driftDEC = 0
         self.drift_ana = np.empty((0,3),'float')
-        self.status = 'finding_guide_star'
         if self.sim_img_mode:
           self.nightshot_sim()
         else:
@@ -373,8 +401,9 @@ class autoguider:
           self.autoguider_q.put(('analysis_stop', None))
 
       elif cmd == 'analysis_stop':
-        sys.stderr.write('Drift Analysis Stopped\r\n')
         self.status = 'idle'
+        if self.verbose:
+          sys.stderr.write('Drift Analysis Stopped\r\n')
         self.analyzing = False
 
       elif cmd == 'guide_star_drift_analysis':
@@ -399,6 +428,8 @@ class autoguider:
         if (self.capture_continuous):
           self.status = 'imaging'
           self.autoguider_q.put(('capture_one', None))
+        else:
+          self.status = 'idle'
 
       elif cmd == 'ss_connect':
         self.scopeserver_connect()
@@ -409,7 +440,7 @@ class autoguider:
         self.sync_time()
 
       elif cmd == 'reset_autoguider':
-        print('Resetting Autoguider...')
+        sys.stderr.write('\r\nResetting Autoguider...\r\n')
         time.sleep(1)
         os.system('sudo systemctl restart autoguider_control.service')
 #        os.execl('/home/pi/src/scopeserver-git/scopeserver/server/picam_autoguider/picam_autoguider.py',(' '))
@@ -436,26 +467,31 @@ class autoguider:
     PORT = self.scopeserver_port
     cmd = '{autoguider_connect}'
 
+    sys.stderr.write('Autoguider Requesting to Connect to ScopeServer...\r\n')
     # Create a socket (SOCK_STREAM means a TCP socket)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
+        sock.settimeout(None)
         sock.sendall(bytes(cmd, 'utf-8'))
     
         # Receive response from the server and finish
         response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
 #    sys.stderr.write('\r\nAuto Guider Sent:     %s\r\n' % (response))
 #    sys.stderr.write('Auto Guider Received: %s\r\n' % (response))
-    if response == 'autoguider_connected':
+    if response == 'ack':
       self.scopeserver_connected = True
-      sys.stderr.write('ScopeServer Connected\r\n')
+      sys.stderr.write('  ScopeServer Connected.\r\n')
     else:
       self.scopeserver_connected = False
-      sys.stderr.write('ScopeServer Not Connected\r\n')
+      sys.stderr.write('  ScopeServer Not Connected.\r\n')
 
 
   # Get input from terminal
@@ -568,10 +604,11 @@ class autoguider:
       response = 'autoguider_time %s' % (str(time.time_ns()))
 
     elif cmd == 'scopeserver_connect':
+      sys.stderr.write('ScopeServer Requesting to Connect to Autoguider...\r\n')
       self.scopeserver_connected = True
-      response = 'scopeserver_connected'
+      response = 'ack'
       self.autoguider_q.put(('sync_time', None))
-      sys.stderr.write('ScopeServer Connected\r\n')
+      sys.stderr.write('  ScopeServer Connected.\r\n')
 
     # toggle capture continuously
     elif cmd == 'toggle_imaging':
@@ -581,57 +618,34 @@ class autoguider:
       else:
         self.status = 'idle'
         self.capture_continuous = False
-      response = 'ack_toggle_imaging'
+      response = 'ack'
 
     elif cmd.split()[0] == 'set_gamma_val':
       self.gamma = float(cmd.split()[1])
-      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
-      self.make_guider_view()
-      response = 'ack_set_gamma_val'
+      self.autoguider_q.put(('set_gamma_lut', None))
+      response = 'ack'
 
     elif cmd.split()[0] == 'set_bp_val':
       self.blackpoint = int(float(cmd.split()[1]))
-      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
-      self.make_guider_view()
-      response = 'ack_set_bp_val'
+      self.autoguider_q.put(('set_gamma_lut', None))
+      response = 'ack'
 
-    elif cmd == 'gamma_minus':
-      self.gamma -= 0.5
-      if self.gamma < 0.5:
-        self.gamma = 0.5
-      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
-      self.make_guider_view()
-      response = 'ack_gamma_minus'
+    elif cmd.split()[0] == 'set_exposure_val':
+      self.exposure = float(cmd.split()[1])
+      self.autoguider_q.put(('set_exposure', None))
+      response = 'ack'
 
-    elif cmd == 'gamma_plus':
-      self.gamma += 0.5
-      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
-      self.make_guider_view()
-      response = 'ack_gamma_plus'
-
-    elif cmd == 'bp_minus':
-      self.blackpoint -= 1
-      if self.blackpoint < 0:
-        self.blackpoint = 0
-      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
-      self.make_guider_view()
-      response = 'ack_bp_minus'
-
-    elif cmd == 'bp_plus':
-      self.blackpoint += 1
-      if self.blackpoint > 255:
-        self.blackpoint = 255
-      self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
-      self.make_guider_view()
-      response = 'ack_bp_plus'
+    elif cmd.split()[0] == 'set_autoguider_interval_val':
+      self.autoguider_interval = float(cmd.split()[1])
+      response = 'ack'
 
     elif cmd == 'find_guide_star':
       self.autoguider_q.put(('find_guide_star', None))
-      response = 'ack_find_guide_star'
+      response = 'ack'
 
     elif cmd == 'center_guide_star':
 #      self.autoguider_q.put(('center_guide_star', None))
-      response = 'ack_center_guide_star'
+      response = 'ack'
 
     elif cmd == 'toggle_guiding':
       if self.analyzing:
@@ -640,19 +654,19 @@ class autoguider:
         self.autoguider_q.put(('guide_start', None))
       else:
         self.autoguider_q.put(('guide_stop', None))
-      response = 'ack_toggle_guiding'
+      response = 'ack'
 
     elif cmd == 'guide_start':
       self.autoguider_q.put(('guide_start', None))
-      response = 'guiding_started'
+      response = 'ack'
 
     elif cmd == 'guide_stop':
       self.autoguider_q.put(('guide_stop', None))
-      response = 'ack_guiding_stopped'
+      response = 'ack'
 
     elif cmd == 'guide_star_drift':
       self.autoguider_q.put(('guide_star_drift', None))
-      response = 'ack_guide_star_drift'
+      response = 'ack'
 
     elif cmd == 'get_status':
       response = str(self.get_status())
@@ -664,10 +678,10 @@ class autoguider:
         self.autoguider_q.put(('analysis_start', None))
       else:
         self.autoguider_q.put(('analysis_stop', None))
-      response = 'ack_toggle_analyzing'
+      response = 'ack'
 
     elif cmd == 'get_view':
-      response = str(self.get_view())
+      response = self.get_view()
 
     elif cmd == 'reset_server':
       pass
@@ -676,15 +690,15 @@ class autoguider:
       self.server_stop()
 
     elif cmd == 'reset_autoguider':
-      response = 'reset_autoguider'
+      response = 'ack'
       self.autoguider_q.put(('reset_autoguider', None))
 
     elif cmd == 'reboot_autoguider':
-      response = 'reboot_autoguider'
+      response = 'ack'
       self.autoguider_q.put(('reboot_autoguider', None))
 
     elif cmd == 'shutdown_autoguider':
-      response = 'shutdown_autoguider'
+      response = 'ack'
       self.autoguider_q.put(('shutdown_autoguider', None))
 
     else:
@@ -712,7 +726,7 @@ class autoguider:
     self.cam.resolution = (3280,2464)
     self.cam.rotation = 180
 
-    self.exposure = 1.0  # exposure time in seconds
+#    self.exposure = 1.0  # exposure time in seconds
 
     self.cam.framerate = 1/self.exposure
     self.cam.shutter_speed = int(self.exposure*1e6/1.0)
@@ -774,7 +788,10 @@ class autoguider:
 
     # Capture to memory buffer:
     img_buf = io.BytesIO()
-    sys.stderr.write('  Capturing image to buffer  \r\n')
+    if self.verbose:
+      sys.stderr.write('  Capturing image to buffer  \r\n')
+    t0 = time.time()
+#    sys.stderr.write('\r\nCapturing image at t: %s\r\n' % (str(t0)))
     self.cam.capture(img_buf, use_video_port=True, format='jpeg', quality=75)
     img_buf.truncate()
     img_buf.seek(0)
@@ -789,7 +806,8 @@ class autoguider:
     self.image_c = img_c
 #    ofn = './images/image.jpg'
 #    cv2.imwrite(ofn, img, (cv2.IMWRITE_JPEG_QUALITY, 75))
-    sys.stderr.write('      Captured: %s\r\n' % (str(self.image_c.shape)))
+    if self.verbose:
+      sys.stderr.write('      Captured: %s\r\n' % (str(self.image_c.shape)))
 
 #    img = cv2.resize(img,(1600,1200))
 #    img_buf = io.BytesIO(cv2.imencode(".jpg", img, (cv2.IMWRITE_JPEG_QUALITY, 75))[1])
@@ -797,6 +815,20 @@ class autoguider:
 
 #    if self.status != 'active_analyzing':
 #      self.make_guider_view()
+
+    '''
+    dt = time.time() - t0
+    delay = self.autoguider_interval - dt
+    sys.stderr.write('    delaying: %s\r\n' % (str(delay)))
+    if delay > 0.0:
+      time.sleep(delay)
+    '''
+
+    delay = self.autoguider_interval - self.exposure
+#    sys.stderr.write('    delaying: %s\r\n' % (str(delay)))
+    if delay > 0.0:
+#      time.sleep(delay)
+      pass
 
     self.img_count += 1
 
@@ -815,7 +847,9 @@ class autoguider:
 
   def nightshot_sim(self):
 
-    time.sleep(1.0)
+    t0 = time.time()
+#    sys.stderr.write('\r\nReading sim image at t: %s\r\n' % (str(t0)))
+    time.sleep(0.35*self.exposure)
     my_path = os.path.split(os.path.realpath(__file__))[0]
     img_dir = os.path.join(my_path,'./images_2/')
     img_fns = sorted(glob.glob(img_dir + '*'))
@@ -824,14 +858,20 @@ class autoguider:
 
     i = self.img_count % len(img_fns)
     img_fn = img_fns[i]
-    sys.stderr.write('Reading sim image: %s\r\n' % (img_fn))
+ 
+    if self.verbose:
+      sys.stderr.write('Reading sim image: %s\r\n' % (img_fn))
+
 
 #    img_g = cv2.imread(img_fn, cv2.IMREAD_GRAYSCALE)
     img_c = cv2.imread(img_fn, cv2.IMREAD_UNCHANGED)
     img_g = cv2.cvtColor(img_c, cv2.COLOR_BGR2GRAY)
     self.image = img_g
     self.image_c = img_c
-    sys.stderr.write('Sim Image: %s\r\n' % (str(self.image_c.shape)))
+
+    if self.verbose:
+      sys.stderr.write('Sim Image: %s\r\n' % (str(self.image_c.shape)))
+
 #    img = cv2.imread(img_fn)
 #    img = np.flipud(img)
 #    self.image = img
@@ -856,6 +896,20 @@ class autoguider:
     '''
 
 #    self.make_guider_view()
+
+    '''
+    dt = time.time() - t0
+    delay = self.autoguider_interval - dt
+    sys.stderr.write('    delaying: %s\r\n' % (str(delay)))
+    if delay > 0:
+      time.sleep(delay)
+    '''
+
+    delay = self.autoguider_interval - self.exposure
+#    sys.stderr.write('    delaying: %s\r\n' % (str(delay)))
+    if delay > 0.0:
+#      time.sleep(delay)
+      pass
 
     self.img_count += 1
 
@@ -896,6 +950,7 @@ class autoguider:
 #    pil_img = Image.fromarray(img).resize((1600,1200))
     font = ImageFont.truetype("/usr/share/fonts/dejavu/DejaVuSans.ttf", 48)
     draw = ImageDraw.Draw(pil_img)
+    text_label = '???'
     if self.status == 'idle':
       text_label = 'Idle'
     elif self.status == 'imaging':
@@ -910,8 +965,23 @@ class autoguider:
       text_label = 'Guiding'
     elif self.status == 'active_analyzing':
       text_label = 'Analyzing'
-    text_label = '%s %d  \u03B3=%g bp=%d' % (text_label, self.img_count, self.gamma, self.blackpoint)
+    elif self.status == 'init_cam':
+      text_label = 'Init Camera'
+
+    #Status labels
+    text_label = '%s %d\n\u03B3=%g\nbp=%d\nexp=%g\ndt=%g' % (text_label, self.img_count, self.gamma, self.blackpoint, self.exposure, self.autoguider_interval)
     draw.text((50,50), text_label, (0xd0,0,0), font=font)
+
+    #NSEW labels
+    n_label = 'N'
+    s_label = 'S'
+    e_label = 'E'
+    w_label = 'W'
+    draw.text((785,4), n_label, (0xd0,0,0), font=font)
+    draw.text((785,1140), s_label, (0xd0,0,0), font=font)
+    draw.text((10,575), e_label, (0xd0,0,0), font=font)
+    draw.text((1542,575), w_label, (0xd0,0,0), font=font)
+
     #Edges of image
     draw.line(((0,0),(1599,0)),fill=(0xd0,0,0),width=1)
     draw.line(((0,1199),(1599,1199)),fill=(0xd0,0,0),width=1)
@@ -955,38 +1025,6 @@ class autoguider:
     img_buf = io.BytesIO()
     pil_img.save(img_buf,"JPEG",quality=75)
     self.guider_view = 'data:image/jpg;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
-
-
-  def plot_guider_view(self):
-    img = self.image
-    plt.style.use('dark_background')
-    fig,ax = plt.subplots(1)
-    ax.spines['bottom'].set_color('#d00000')
-    ax.spines['top'].set_color('#d00000') 
-    ax.spines['right'].set_color('#d00000')
-    ax.spines['left'].set_color('#d00000')
-    ax.tick_params(axis='x', colors='#d00000', which='both')
-    ax.tick_params(axis='y', colors='#d00000', which='both')
-    ax.yaxis.label.set_color('#d00000')
-    ax.xaxis.label.set_color('#d00000')
-    ax.title.set_color('#d00000')
-
-    norm = ImageNormalize(stretch=SqrtStretch())
-    ax.imshow(255-img, cmap='Greys', origin='lower', norm=norm)
-
-    if type(self.guide_star_rect) != type(None):
-      rect = patches.Rectangle(self.guide_star_rect[0],self.guide_star_rect[1],self.guide_star_rect[2],linewidth=1,edgecolor='r',facecolor='none')
-      ax.add_patch(rect)
-
-    ax.text(0.05, 0.90, str(self.img_count),
-        verticalalignment='bottom', horizontalalignment='left',
-        transform=ax.transAxes,
-        color='#d00000', fontsize=12)
-
-    img_buf = io.BytesIO()
-    plt.savefig(img_buf, format='png')
-    plt.close()
-    self.guider_view = 'data:image/png;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
 
 
   def plot_drift_analysis(self):
@@ -1036,7 +1074,9 @@ class autoguider:
 
     self.make_guider_view()
 
-    sys.stderr.write('Finding Guide Star...\r\n')
+    if self.verbose:
+      sys.stderr.write('Finding Guide Star...\r\n')
+
     self.ref_image = self.image
     img = self.ref_image
 
@@ -1061,7 +1101,8 @@ class autoguider:
     except:
       self.status = 'no_guide_star_found'
       self.make_guider_view()
-      sys.stderr.write('\rNo Guide Star Found\r\n')
+      if self.verbose:
+        sys.stderr.write('\rNo Guide Star Found\r\n')
       return
 
 #    print('')
@@ -1075,7 +1116,8 @@ class autoguider:
     if len(sources) == 0:
       self.status = 'no_guide_star_found'
       self.make_guider_view()
-      sys.stderr.write('\rNo Guide Star Found\r\n')
+      if self.verbose:
+        sys.stderr.write('\rNo Guide Star Found\r\n')
       return
 
     self.guide_star_pos = np.array([sources['xcentroid'][0],sources['ycentroid'][0]])
@@ -1083,8 +1125,8 @@ class autoguider:
     self.guide_star_rect_xy = np.array( [self.guide_star_pos-[w/2.,h/2.],self.guide_star_pos+[w/2.,h/2.]] )
     self.positions = np.transpose((sources['xcentroid'], sources['ycentroid']))
 
-    swim_dir = './swim_tmp/'
-    img_ref_fn = swim_dir + 'guide_ref.jpg'
+    swim_dir = os.path.join(self.dir_path,'swim_tmp')
+    img_ref_fn = os.path.join(swim_dir,'guide_ref.jpg')
     self.image_crop_rect(img, self.guide_star_rect, img_ref_fn)
 
     '''
@@ -1123,7 +1165,8 @@ class autoguider:
 
     self.status = 'found_guide_star'
     self.make_guider_view()
-    sys.stderr.write('Found Guide Star\r\n')
+    if self.verbose:
+      sys.stderr.write('Found Guide Star\r\n')
 
 
   def image_crop_rect(self, img, rect, img_out_fn):
@@ -1140,9 +1183,9 @@ class autoguider:
     test_img_dir = './images_3/'
     test_img_fns = sorted(glob.glob(test_img_dir + '*'))
 
-    swim_dir = './swim_tmp/'
-    img_ref_fn = swim_dir + 'guide_ref.jpg'
-    img_update_fn = swim_dir + 'guide_update.jpg'
+    swim_dir = os.path.join(self.dir_path,'swim_tmp')
+    img_ref_fn = os.path.join(swim_dir,'guide_ref.jpg')
+    img_update_fn = os.path.join(swim_dir,'guide_update.jpg')
 
     guide_star_dat = np.empty((0,5))
     guide_star_dat = np.append(guide_star_dat,[0,0,0,0,0]).reshape(-1,5)
@@ -1174,8 +1217,8 @@ class autoguider:
     self.driftDEC += dyi
     self.drift_ana = np.append(self.drift_ana, np.array([[self.drift_dt,self.driftRA,self.driftDEC]]), axis=0)
 
-#    sys.stderr.write('swim match:  SNR: %g  dX: %g  dY: %g\r\n' % (snr, dxi, dyi))
-    sys.stderr.write('swim match:  SNR: %g  driftRA: %.4g  driftDEC: %.4g\r\n' % (snr, self.driftRA, self.driftDEC))
+    if self.verbose:
+      sys.stderr.write('swim match:  SNR: %g  driftRA: %.4g  driftDEC: %.4g\r\n' % (snr, self.driftRA, self.driftDEC))
 
     self.plot_drift_analysis()
 
@@ -1185,9 +1228,9 @@ class autoguider:
     test_img_dir = './images_3/'
     test_img_fns = sorted(glob.glob(test_img_dir + '*'))
 
-    swim_dir = './swim_tmp/'
-    img_ref_fn = swim_dir + 'guide_ref.jpg'
-    img_update_fn = swim_dir + 'guide_update.jpg'
+    swim_dir = os.path.join(self.dir_path,'swim_tmp')
+    img_ref_fn = os.path.join(swim_dir,'guide_ref.jpg')
+    img_update_fn = os.path.join(swim_dir,'guide_update.jpg')
 
     guide_star_dat = np.empty((0,5))
     guide_star_dat = np.append(guide_star_dat,[0,0,0,0,0]).reshape(-1,5)
@@ -1217,8 +1260,8 @@ class autoguider:
     self.dDEC = int(dyi*self.dec_counts_per_pixel)
     self.correction_log.write('%d %d\n' % (self.dRA, self.dDEC))
 
-#    sys.stderr.write('swim match:  SNR: %g  dX: %g  dY: %g\r\n' % (snr, dxi, dyi))
-    sys.stderr.write('swim match:  SNR: %g  dRA: %d  dDEC: %d\r\n' % (snr, self.dRA, self.dDEC))
+    if self.verbose:
+      sys.stderr.write('swim match:  SNR: %g  dRA: %d  dDEC: %d\r\n' % (snr, self.dRA, self.dDEC))
 
 #    guide_star_dat = np.append(guide_star_dat,[t,dx,dy,dxi,dyi]).reshape(-1,5)
 
@@ -1235,7 +1278,7 @@ class autoguider:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
       # Connect to server and send cmd
       try:
-        sock.settimeout(1.0)
+        sock.settimeout(0.1)
         sock.connect((HOST, PORT))
         sock.settimeout(None)
         sock.sendall(bytes(cmd, 'utf-8'))
@@ -1244,14 +1287,16 @@ class autoguider:
         response = str(sock.recv(1024), 'utf-8')
       except:
         response = ''
+      finally:
+        sock.close()
 
 #    sys.stderr.write('Auto Guider Sent:       %s\r\n' % (cmd))
 #    sys.stderr.write('Auto Guider Received:   %s\r\n' % (response))
-    if response == 'ack_guide_star_correction':
+    if response == 'ack':
       self.scopeserver_connected = True
     else:
       self.scopeserver_connected = False
-      sys.stderr.write('ScopeServer Not Connected\r\n')
+      sys.stderr.write('Guide Star Correction Failed: ScopeServer Not Connected\r\n')
 
 
   def sync_time(self):
@@ -1274,16 +1319,23 @@ class autoguider:
       # Create a socket (SOCK_STREAM means a TCP socket)
       with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         # Connect to server and send cmd
-        sock.connect((HOST, PORT))
-        t0 = time.time_ns()
-        sock.sendall(bytes(cmd, 'utf-8'))
+        try:
+          sock.settimeout(0.1)
+          sock.connect((HOST, PORT))
+          sock.settimeout(None)
+          t0 = time.time_ns()
+          sock.sendall(bytes(cmd, 'utf-8'))
 
-        # Receive response from the server and finish
-        response = str(sock.recv(1024), 'utf-8')
-        t2 = time.time_ns()
+          # Receive response from the server and finish
+          response = str(sock.recv(1024), 'utf-8').split()
+          t2 = time.time_ns()
+        except:
+          response = []
+        finally:
+          sock.close()
 
-      if response.split()[0] == 'scopeserver_time':
-        t_ss = int(response.split()[1])
+      if len(response):
+        t_ss = int(response[1])
         dt = t2 - t0
         t_diff = (t_ss - dt/2) - t0
         dt_array = np.append(dt_array,dt)
@@ -1335,5 +1387,6 @@ if (__name__ == '__main__'):
     sys.stderr.write('\r\nStarting PiCAM AutoGuider at %s:%d\r\n' % (server_address, port))
 
   ag = autoguider(server_address, port, sim_img_mode=sim_img_mode)
+#  ag = autoguider(server_address, port, sim_img_mode=True)
   ag.server_start()
 

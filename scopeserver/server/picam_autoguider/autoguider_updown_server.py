@@ -90,6 +90,7 @@ class autoguider_updown:
     self.autoguider_ud_port = port
     host_dict = {}
     host_dict['10.0.1.23'] = '10.0.1.20'
+    host_dict['10.0.1.24'] = '10.0.1.23'
     host_dict['192.168.50.10'] = '192.168.50.5'
     self.scopeserver_host = host_dict[self.autoguider_ud_host]
     self.scopeserver_port = 54030
