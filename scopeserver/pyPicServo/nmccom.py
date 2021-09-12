@@ -60,6 +60,16 @@ REVERSE =           0x40  # 1 = command neg. PWM or vel, 0 = positive
 MOVE_REL =          0x40  # 1 = move relative, 0 = move absolute
 START_NOW =         0x80  # 1 = start now, 0 = wait for START_MOVE command
 
+# Servo Module SET_HOMING control byte bit definitions:
+ON_LIMIT1 =         0x01  # home on change in limit 1
+ON_LIMIT2 =         0x02  # home on change in limit 2
+HOME_MOTOR_OFF =    0x04  # turn motor off when homed
+ON_INDEX =          0x08  # home on change in index
+HOME_STOP_ABRUPT =  0x10  # stop abruptly when homed
+HOME_STOP_SMOOTH =  0x20  # stop smoothly when homed
+ON_POS_ERR =        0x40  # home on excessive position error
+ON_CUR_ERR =        0x80  # home on overcurrent error
+
 # Servo I/O Control bit flags
 # limit mode flags:
 LIMIT_OFF =       0x04
@@ -426,6 +436,15 @@ class NmcModule():
       self.cmd_msg += ('     pwm: %a\n'     % (pwm))
     if self.checksum_error:
       self.err_msg = ('ServoLoadTraj: Error in load trajectory\n')
+    self.PrintMsg()
+
+
+  def ServoSetHoming(self, control_byte=0xC):
+    cmd = bytes([self.addr, 0x19, control_byte])
+    self.SendCmd(cmd, 0 + self.len_status)
+    self.cmd_msg = ('ServoSetHoming response: %s\n' % (self.response))
+    if self.checksum_error:
+      self.err_msg = ('ServoSetHoming: Error in Set Homing\n')
     self.PrintMsg()
 
 

@@ -208,9 +208,9 @@ def control(request):
         ut2 = str(round(float(ut[-7:])*2)/2)[-1]
         result['#utc_time'] = ut1+ut2
         result['#t_acc'] = 't_acc:  %.4gus  :  %.4gus' % (1000*status_dict['t_offset'], 1000*status_dict['t_jitter'])
-        result['#meridian_mode'] = 'mflp:  %s' % (status_dict['meridian_mode'])
+        result['#meridian_mode'] = 'm: %s | PECv: %d %s' % (status_dict['meridian_mode'], status_dict['pec_rate'], status_dict['pec_tracking'])
         result['#scope_position_dec'] = '%s (%d)' % (status_dict['dec_angle'], status_dict['dec_pos'])
-        result['#scope_position_ra'] = '%s (%d)' % (status_dict['ra_time'], status_dict['ra_pos'])
+        result['#scope_position_ra'] = '%s (%d,%d)' % (status_dict['ra_time'], status_dict['ra_pos'], status_dict['pec_idx'])
         result['#target_position_dec'] = '%s (%d)' % (status_dict['target_dec_angle'], status_dict['target_dec_pos'])
         result['#target_position_ra'] = '%s (%d)' % (status_dict['target_ra_time'], status_dict['target_ra_pos'])
         result['#motor_current_dec'] = '%d' % (status_dict['motor_current_dec'])
@@ -223,6 +223,8 @@ def control(request):
         result['#gamma_val_str'] = '%s' % (status_dict['gamma_val_str'])
         result['#bp_val'] = '%s' % (status_dict['bp_val_str'])
         result['#bp_val_str'] = '%s' % (status_dict['bp_val_str'])
+        result['#mag_val'] = '%s' % (status_dict['mag_val_str'])
+        result['#mag_val_str'] = '%s' % (status_dict['mag_val_str'])
         result['#exposure_val'] = '%s' % (status_dict['exposure_val_str'])
         result['#exposure_val_str'] = '%s' % (status_dict['exposure_val_str'])
         result['#autoguider_interval_val'] = '%s' % (status_dict['autoguider_interval_val_str'])
@@ -234,6 +236,23 @@ def control(request):
         result['#guider_view'] = send_autoguider_cmd('{get_view}')
 
         result['status'] = "Success"
+      elif action == "set_index":
+        response = send_scopeserver_cmd('{set_ra_index_pos}')
+        result['status'] = "Success"
+      elif action == "toggle_pec":
+        response = send_scopeserver_cmd('{toggle_pec}')
+        result['status'] = "Success"
+      elif action == "imgpick":
+        pick_x = request.POST.get("pick_x")
+        pick_y = request.POST.get("pick_y")
+        response = send_autoguider_cmd('{set_img_pick %s %s}' % (pick_x, pick_y))
+        result['status'] = "Success"
+      elif action == "clearpick":
+        response = send_autoguider_cmd('{clear_img_pick}')
+        result['status'] = "Success"
+      elif action == "move1to2":
+        response = send_autoguider_cmd('{move1to2}')
+        result['status'] = "Success"
       elif action == "set_gamma_val":
         value = request.POST.get("value")
         response = send_autoguider_cmd('{set_gamma_val %s}' % (value))
@@ -243,6 +262,11 @@ def control(request):
         value = request.POST.get("value")
         response = send_autoguider_cmd('{set_bp_val %s}' % (value))
         result['#bp_val_str'] = '%s' % (value)
+        result['status'] = "Success"
+      elif action == "set_mag_val":
+        value = request.POST.get("value")
+        response = send_autoguider_cmd('{set_mag_val %s}' % (value))
+        result['#mag_val_str'] = '%s' % (value)
         result['status'] = "Success"
       elif action == "set_exposure_val":
         value = request.POST.get("value")
@@ -268,11 +292,15 @@ def control(request):
         result['status'] = "Success"
       elif action == "agguide":
         print("Toggle Guiding")
-        response = send_autoguider_cmd('{toggle_guiding}')
+        response = send_scopeserver_cmd('{toggle_guiding}')
         result['status'] = "Success"
       elif action == "agana":
         print("Toggle Analysis")
         response = send_autoguider_cmd('{toggle_analysis}')
+        result['status'] = "Success"
+      elif action == "agcorr":
+        print("Toggle Guide Correction Plot")
+        response = send_autoguider_cmd('{toggle_gcorr}')
         result['status'] = "Success"
       elif action == "darv":
         print("Toggle DARV")
