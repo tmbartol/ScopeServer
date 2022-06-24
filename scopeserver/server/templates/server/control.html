@@ -71,6 +71,7 @@ button.actionbutton {
 <div align="center">
 <img 
      id="guider_view"
+     name="imgpick"
      src=""
      alt="Autoguider View"
      style="width:400px;height:300px;"
@@ -100,9 +101,6 @@ button.actionbutton {
 </div>
 
 
-<!--  Display ScopeServer Error Message  -->
-<div align="center" style="color:red" id="errorDiv"></div>
-
 
 <div class=tabpanel>
   <!--  ScopeServer/Autoguider Reboot/Shutdown Controls -->
@@ -110,54 +108,30 @@ button.actionbutton {
     <!--  ScopeServer/Autoguider Reboot/Shutdown Controls -->
     <div class="button_bar">
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">gpsrst</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="gpsreset" value="gpsreset">gpsreset</button>
       </object>
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="ssreset" value="ssreset">ssrst</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="ssreset" value="ssreset">ssreset</button>
       </object>
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="ssreboot" value="ssreboot">ssrbt</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="ssreboot" value="ssreboot">ssreboot</button>
       </object>
       <object>
-          <button class="btn btn-warning dark-background red actionbutton" name="ssshutdown" value="ssshutdown">ssdwn</button>
+          <button class="btn btn-warning dark-background red actionbutton" name="ssshutdown" value="ssshutdown">ssdown</button>
       </object>
     </div>
     <div class="button_bar">
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="wifi" value="wifi">&nbsp; WiFi &nbsp;</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="wifi" value="wifi">&nbsp; &nbsp; WiFi &nbsp; &nbsp;</button>
       </object>
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="agreset" value="agreset">agrst</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="agreset" value="agreset">agreset</button>
       </object>
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="agreboot" value="agreboot">agrbt</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="agreboot" value="agreboot">agreboot</button>
       </object>
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="agshutdown" value="agshutdown">agdwn</button>
-      </object>
-    </div>
-  </div>
-
-  <!--  Autoguider Adjustment Controls  -->
-  <div id="ImgAdj" class="tabcontent">
-    <div class="button_bar">
-      <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="agauto" value="agauto">auto</button>
-      </object>
-
-      <object class="slidecontainer">
-        gamma: <object id="gamma_val_str"></object>
-        <object id="gamma_val"></object>
-      </object>
-    </div>
-    <div class="button_bar">
-      <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="meridianflip" value="meridianflip">mflp</button>
-      </object>
-
-      <object class="slidecontainer">
-        black point: <object id="bp_val_str"></object>
-        <object id="bp_val"></object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agshutdown" value="agshutdown">agdown</button>
       </object>
     </div>
   </div>
@@ -177,20 +151,65 @@ button.actionbutton {
     </div>
   </div>
 
+  <!--  Autoguider Adjustment Controls  -->
+  <div id="ImgAdj" class="tabcontent">
+    <div class="button_bar">
+      <object class="slidecontainer">
+        gamma: <object id="gamma_val_str"></object>
+        <object id="gamma_val"></object>
+      </object>
+    </div>
+    <div class="button_bar">
+      <object class="slidecontainer">
+        black point: <object id="bp_val_str"></object>
+        <object id="bp_val"></object>
+      </object>
+    </div>
+    <div class="button_bar">
+      <object class="slidecontainer">
+        mag: <object id="mag_val_str"></object>
+        <object id="mag_val"></object>
+      </object>
+    </div>
+  </div>
+
   <!--  Autoguider Action Controls  -->
   <div id="AGCtl" class="tabcontent">
     <div class="button_bar">
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="agfind" value="agfind">find</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="meridianflip" value="meridianflip">mflp</button>
       </object>
       <object>
-          <button class="btn btn-primary dark-background red actionbutton" name="agguide" value="agguide">guide</button>
+          <button class="btn btn-primary dark-background red actionbutton" name="agcenter" value="agcenter">1>X</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="move1to2" value="move1to2">1>2</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agcorr" value="agcorr">gcorr</button>
       </object>
       <object>
           <button class="btn btn-primary dark-background red actionbutton" name="agana" value="agana">ana</button>
       </object>
       <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="set_index" value="set_index">index</button>
+      </object>
+    </div>
+    <div class="button_bar">
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agfind" value="agfind">&nbsp;find&nbsp; </button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="clearpick" value="clearpick">clear</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="agguide" value="agguide">guide</button>
+      </object>
+      <object>
           <button class="btn btn-primary dark-background red actionbutton" name="agimage" value="agimage">img</button>
+      </object>
+      <object>
+          <button class="btn btn-primary dark-background red actionbutton" name="toggle_pec" value="toggle_pec">&nbsp; pec &nbsp;</button>
       </object>
     </div>
   </div>
@@ -199,12 +218,12 @@ button.actionbutton {
     <span class="glyphicon glyphicon-off" aria-hidden="true"></span>
   </button>
 
-  <button class="tablink" onclick="openButtonBar('ImgAdj', this)">
-    <span class="glyphicon glyphicon-tasks" aria-hidden="true"></span>
-  </button>
-
   <button class="tablink" onclick="openButtonBar('CamAdj', this)">
     <span class="glyphicon glyphicon-camera" aria-hidden="true"></span>
+  </button>
+
+  <button class="tablink" onclick="openButtonBar('ImgAdj', this)">
+    <span class="glyphicon glyphicon-tasks" aria-hidden="true"></span>
   </button>
 
   <button class="tablink" onclick="openButtonBar('AGCtl', this)">
@@ -214,6 +233,45 @@ button.actionbutton {
 </div>
 
 
+<!--  Display ScopeServer Error Message  -->
+<div align="center" style="color:red" id="errorDiv"></div>
+
+
+<script>
+    function imgpickSend(e,x,y){
+        jQuery.ajax({
+            data: {
+                csrfmiddlewaretoken: csrftoken,
+                action: e.currentTarget.name,
+                pick_x: x,
+                pick_y: y,
+            },
+            type: 'POST',
+            success: function(result) {
+                if (result['status'] == "Success") {
+                    for (var key in result) {
+                        if (key != "status") {
+                            var value = result[key];
+                            $(key).html(value);
+                        }
+                    }
+                } else {
+                    alert(result['msg']);
+                    window.location.reload();
+                }
+            },
+            error: function(jqXHR, textStatus, String) {
+                $("#errorDiv").html("Error Contacting ScopeServer");
+            },
+        });
+    }
+    $("img").on("click", function(event) {
+        var x = event.pageX - this.offsetLeft;
+        var y = event.pageY - this.offsetTop;
+//        alert("X Coordinate: " + x + " Y Coordinate: " + y);
+        imgpickSend(event,x,y);
+    });
+</script>
 
 <script>
 function openButtonBar(buttonBar,elmnt) {
@@ -265,6 +323,11 @@ function get_scope_status() {
                     else if (key == "#bp_val") {
                         var value = result[key];
                         var slider_html = '<input name="set_bp_val" class="slider actionslider" type="range" min="0" max="20" step="1" value="' + value + '">';
+                        $(key).html(slider_html);
+                    }
+                    else if (key == "#mag_val") {
+                        var value = result[key];
+                        var slider_html = '<input name="set_mag_val" class="slider actionslider" type="range" min="1" max="4" step="1" value="' + value + '">';
                         $(key).html(slider_html);
                     }
                     else if (key == "#exposure_val") {
