@@ -32,7 +32,7 @@ print('  Analog gain: %s\n' % (str(float(cam.analog_gain))))
 
 stream = io.BytesIO()
 n = 0
-num = 500
+num = 10
 t0 = time.time()
 tp = t0
 #for _ in cam.capture_continuous(stream, format='jpeg', use_video_port=False):

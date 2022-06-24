@@ -5,6 +5,7 @@ import threading
 import socketserver
 import signal
 import sys
+import gc
 import tty
 import termios
 import time
@@ -20,7 +21,7 @@ import matplotlib.patches as patches
 import os
 import queue
 import subprocess as sp
-import picamera
+import picamerax as picamera
 from fractions import Fraction
 import io
 import base64
@@ -31,10 +32,17 @@ from astropy.visualization import SqrtStretch
 from astropy.visualization.mpl_normalize import ImageNormalize
 from photutils import  DAOStarFinder, CircularAperture
 from photutils.psf.groupstars import DAOGroup
+import skimage.exposure as skie
+import skimage.morphology as morph
 
 from PIL import Image, ImageFont, ImageDraw
 import random
 import glob
+
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning) 
+warnings.filterwarnings("ignore", category=FutureWarning) 
+warnings.filterwarnings("ignore")
 
 
 # sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -48,7 +56,7 @@ def signal_handler(signal, frame):
   except:
     pass
   sys.stderr.write('\r\nAutoGuider caught signal %d\r\n' % (signal))
-  sys.stderr.write('AutoGuider shutting down.\r\n')
+  sys.stderr.write('AutoGuider shutting down...\r\n')
 
   sys.exit(0)
 
@@ -80,41 +88,44 @@ class _Getch:
     return ch
 
 
-
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
   def handle(self):
     try:
-      while ag.server_running:
       # Receive data from client
-        data = self.request.recv(1024)
-#        sys.stderr.write('Server received:  "%s"\r\n' % (data.decode('ascii')))
-        if data:
-          # Process client command
-          cmd = data.decode('utf-8').strip()
-          if cmd:
-            if cmd[0] == '{':
-              cmd = cmd[1:-1]
-              response = ag.process_autoguider_cmd(cmd)
-            if response:
-              # Send response to client
-              response = response.encode('utf-8')
-#              sys.stderr.write( 'Server responding:  %s\r\n' % (response) )
-#              sys.stderr.write( 'Server sending:  %d bytes\r\n' % (len(response)) )
-              if cmd == 'get_view':
-#                sys.stderr.write( 'get_view at: %d  len: %d\r\n' % (int(time.time()), len(response)) )
-                self.request.sendall( str(len(response)).encode('utf-8') )
-              self.request.sendall(response)
-              if cmd == 'get_view':
-                ack = self.request.recv(1024).decode('utf-8')
-                if ack == 'ack':
-#                  sys.stderr.write('  \r\ncmd:  %s  got ack\r\n' % (str(cmd)))
-                  pass
-                else:
-#                  sys.stderr.write('  \r\ncmd:  %s  no ack\r\n' % (str(cmd)))
-                  pass
-        else:
-          self.request.close()
-          return
+      data = self.request.recv(1024)
+#      sys.stderr.write('Server received:  "%s"\r\n' % (data.decode('ascii')))
+      if data:
+        # Process client command
+        cmd = data.decode('utf-8').strip()
+        if cmd:
+          if cmd[0] == '{':
+            cmd = cmd[1:-1]
+            response = ag.process_autoguider_cmd(cmd)
+          if response:
+            # Send response to client
+            response = response.encode('utf-8')
+#            sys.stderr.write( 'Server responding:  %s\r\n' % (response) )
+#            sys.stderr.write( 'Server sending:  %d bytes\r\n' % (len(response)) )
+            if cmd == 'get_view':
+#              sys.stderr.write( 'get_view at: %d  len: %d\r\n' % (int(time.time()), len(response)) )
+              self.request.sendall( str(len(response)).encode('utf-8') )
+            self.request.sendall(response)
+            if cmd == 'get_view':
+              ack = self.request.recv(1024).decode('utf-8')
+              if ack == 'ack':
+#                sys.stderr.write('  \r\ncmd:  %s  got ack\r\n' % (str(cmd)))
+                pass
+              else:
+#                sys.stderr.write('  \r\ncmd:  %s  no ack\r\n' % (str(cmd)))
+                pass
+            elif cmd == 'scopeserver_status':
+              status = self.request.recv(1024).decode('utf-8')
+              if status:
+                status = eval(status)
+                self.request.sendall(b'ack')
+                meridian_mode = int(status['meridian_mode'])
+                ag.autoguider_q.put(('update_meridian_mode', meridian_mode))
+#                sys.stderr.write('1) setting meridian_mode: %d\r\n' % (meridian_mode))
     except Exception as e:
       '''
       sys.stderr.write('Exception in Autoguider TCP Command Processor.\r\n')
@@ -171,7 +182,7 @@ def to_precision(v,p):
 class autoguider:
 
   def __init__(self, server_address, port, sim_img_mode=False):
-    self.verbose = False
+    self.verbose = True
     self.dir_path = os.path.dirname(os.path.realpath(__file__))
     self.input_running = False
     self.server_running = False
@@ -180,19 +191,25 @@ class autoguider:
     self.autoguider_running = False
     self.guiding = False
     self.analyzing = False
+    self.gcorr_plot = False
     self.correction_log = None
     self.sim_img_mode=sim_img_mode
     self.dRA = 0
     self.dDEC = 0
     self.driftRA = 0
     self.driftDEC = 0
-    self.drift_t0 = 0
-    self.drift_dt = 0
-    self.drift_ana = np.empty((0,3),'float')
+    self.capture_time = 0
+    self.prev_capture_time = 0
+    self.drift_ana = np.empty((0,4),'float')
+    self.drift_corr = np.empty((0,3),'float')
+    self.pos_ra = 0
+    self.pos_dec = 0
+    self.pec_idx = 0
 
     self.autoguider_host = server_address
     self.autoguider_port = port
     host_dict = {}
+    host_dict['10.0.1.14'] = '10.0.1.13'
     host_dict['10.0.1.23'] = '10.0.1.20'
     host_dict['10.0.1.24'] = '10.0.1.23'
     host_dict['192.168.50.10'] = '192.168.50.5'
@@ -200,18 +217,24 @@ class autoguider:
     self.scopeserver_port = 54030
 
     self.status = 'idle'
-    self.gamma=5.0
-    self.blackpoint=1
-#    self.blackpoint=20
+    self.gamma = 1.0
+    self.blackpoint = 0
+    self.mag = 1
+    self.view_scale = 1.0
+    self.img_pick = False
+    self.pick_pnt_1 = None
+    self.pick_pnt_2 = None
+#    self.blackpoint = 20
     self.exposure = 1.0  # exposure time in seconds
     self.autoguider_interval = 1.0
     self.set_gamma_lut(gamma=self.gamma, blackpoint=self.blackpoint)
+    self.meridian_mode = 1
     self.cam = None
     self.init_cam()
 
 
   def get_status(self):
-    status_str = '%s %d %g %d %g %g' % (self.status, self.img_count, self.gamma, self.blackpoint, self.exposure, self.autoguider_interval)
+    status_str = '%s %d %g %d %d %g %g' % (self.status, self.img_count, self.gamma, self.blackpoint, self.mag, self.exposure, self.autoguider_interval)
     return status_str
 
 
@@ -241,6 +264,7 @@ class autoguider:
     self.scopeserver_connect()
 
     self.autoguider_q.put(('sync_time', None))
+    self.autoguider_q.put(('get_scopeserver_status', None))
 
     sys.stderr.write('\r\nWaiting for a command, type q to quit...\r\n')
     sys.stderr.write('   h -> print this help message\r\n')
@@ -263,7 +287,7 @@ class autoguider:
   def server_stop(self):
     if self.server_running:
       self.server_running=False
-      sys.stderr.write('AutoGuider shutting down.\r\n')
+      sys.stderr.write('AutoGuider shutting down...\r\n')
 
       if self.cam != None:
         self.cam.close()
@@ -332,11 +356,36 @@ class autoguider:
           self.cam.close()
         self.init_cam()
 
+      elif cmd == 'set_mag':
+        self.make_guider_view()
+
+      elif cmd == 'set_img_pick':
+        self.img_pick = True
+        pick_x = cmd_arg[0]
+        pick_y = cmd_arg[1]
+        if type(self.pick_pnt_1) == type(None):
+          self.pick_pnt_1 = np.array((pick_x, pick_y, self.view_scale))
+        elif type(self.pick_pnt_2) == type(None):
+          self.pick_pnt_2 = np.array((pick_x, pick_y, self.view_scale))
+        else:
+          self.pick_pnt_1 = self.pick_pnt_2
+          self.pick_pnt_2 = np.array((pick_x, pick_y, self.view_scale))
+#        sys.stderr.write('  pick_pnt_1:  %s\r\n' % (str(self.pick_pnt_1)))
+#        sys.stderr.write('  pick_pnt_2:  %s\r\n' % (str(self.pick_pnt_2)))
+        self.make_guider_view()
+
+      elif cmd == 'clear_img_pick':
+        self.img_pick = False
+        self.pick_pnt_1 = None
+        self.pick_pnt_2 = None
+        self.make_guider_view()
+
       elif cmd == 'guide_start':
         self.status = 'finding_guide_star'
         if self.verbose:
           sys.stderr.write('Guiding Started...\r\n')
         self.img_count = 0
+        self.drift_corr = np.empty((0,3),'float')
         if self.sim_img_mode:
           self.nightshot_sim()
         else:
@@ -346,6 +395,7 @@ class autoguider:
           self.guiding = True
           logfn = os.path.join(self.dir_path,'correction_log.dat')
           self.correction_log = open(logfn,'w')
+          self.drift_t0 = time.time_ns()
           self.autoguider_q.put(('guide_star_drift', None))
         else:
           self.autoguider_q.put(('guide_stop', None))
@@ -379,6 +429,20 @@ class autoguider:
         else:
           self.status = 'idle'
 
+      elif cmd == 'move1to2':
+        moveRA = -(self.pick_pnt_2[0] - self.pick_pnt_1[0])/self.pick_pnt_1[2]
+        moveDEC = -(self.pick_pnt_2[1] - self.pick_pnt_1[1])/self.pick_pnt_1[2]
+        self.dRA = int(moveRA*self.ra_counts_per_pixel)
+        self.dDEC = int(moveDEC*self.dec_counts_per_pixel)
+        self.scopeserver_guide_star_correction(reset_target=True)
+
+      elif cmd == 'center_guide_star':
+        moveRA = -(800 - self.pick_pnt_1[0])/self.pick_pnt_1[2]
+        moveDEC = -(600 - self.pick_pnt_1[1])/self.pick_pnt_1[2]
+        self.dRA = int(moveRA*self.ra_counts_per_pixel)
+        self.dDEC = int(moveDEC*self.dec_counts_per_pixel)
+        self.scopeserver_guide_star_correction(reset_target=True)
+
       elif cmd == 'analysis_start':
         self.status = 'finding_guide_star'
         if self.verbose:
@@ -386,22 +450,33 @@ class autoguider:
         self.img_count = 0
         self.driftRA = 0
         self.driftDEC = 0
-        self.drift_ana = np.empty((0,3),'float')
+        self.drift_ana = np.empty((0,4),'float')
         if self.sim_img_mode:
           self.nightshot_sim()
         else:
           self.nightshot()
-        self.drift_t0 = time.time_ns()
         self.find_guide_star()
         if self.status == 'found_guide_star':
-          self.drift_ana = np.append(self.drift_ana, np.array([[0.,0.,0.]]), axis=0)
+#          self.drift_ana = np.append(self.drift_ana, np.array([[0.,0.,0.,self.pec_idx]]), axis=0)
           self.analyzing = True
+          self.autoguider_q.put(('get_scopeserver_status', None))
           self.autoguider_q.put(('guide_star_drift_analysis', None))
         else:
           self.autoguider_q.put(('analysis_stop', None))
 
       elif cmd == 'analysis_stop':
         self.status = 'idle'
+
+        # save drift_analysis data
+        t = self.drift_ana[1:,0]
+        ra = self.drift_ana[1:,1]
+        dec = self.drift_ana[1:,2]
+        pex_idx = self.drift_ana[1:,3]
+        outfile = open('/home/pi/src/scopeserver-git/scopeserver/server/picam_autoguider/drift_analysis_data/drift_analysis.dat','w')
+        for i in range(len(t)):
+          outfile.write('%g %g %g %g\n' % (t[i],ra[i],dec[i],pex_idx[i]))
+        outfile.close()
+
         if self.verbose:
           sys.stderr.write('Drift Analysis Stopped\r\n')
         self.analyzing = False
@@ -413,8 +488,8 @@ class autoguider:
             self.nightshot_sim()
           else:
             self.nightshot()
-          self.drift_dt = (time.time_ns() - self.drift_t0)*1e-9
           self.guide_star_drift_analysis()
+          self.autoguider_q.put(('get_scopeserver_status', None))
           self.autoguider_q.put(('guide_star_drift_analysis', None))
         else:
           self.status = 'idle'
@@ -438,6 +513,17 @@ class autoguider:
 
       elif cmd == 'sync_time':
         self.sync_time()
+
+      elif cmd == 'get_scopeserver_status':
+        self.get_scopeserver_status()
+
+      elif cmd == 'update_meridian_mode':
+        if cmd_arg != self.meridian_mode:
+          self.meridian_mode = cmd_arg
+#          if type(self.image_c) != type(None):
+          if type(self.image) != type(None):
+            self.image = cv2.rotate(self.image, cv2.ROTATE_180)
+          self.make_guider_view()
 
       elif cmd == 'reset_autoguider':
         sys.stderr.write('\r\nResetting Autoguider...\r\n')
@@ -606,9 +692,10 @@ class autoguider:
     elif cmd == 'scopeserver_connect':
       sys.stderr.write('ScopeServer Requesting to Connect to Autoguider...\r\n')
       self.scopeserver_connected = True
-      response = 'ack'
       self.autoguider_q.put(('sync_time', None))
+      self.autoguider_q.put(('get_scopeserver_status', None))
       sys.stderr.write('  ScopeServer Connected.\r\n')
+      response = 'ack'
 
     # toggle capture continuously
     elif cmd == 'toggle_imaging':
@@ -620,6 +707,21 @@ class autoguider:
         self.capture_continuous = False
       response = 'ack'
 
+    elif cmd.split()[0] == 'set_img_pick':
+      pick_x = int(4*float(cmd.split()[1]))
+      pick_y = int(4*float(cmd.split()[2]))
+      self.autoguider_q.put(('set_img_pick', (pick_x, pick_y)))
+      response = 'ack'
+
+    elif cmd.split()[0] == 'clear_img_pick':
+      self.autoguider_q.put(('clear_img_pick', None))
+      response = 'ack'
+
+    elif cmd.split()[0] == 'move1to2':
+      if (type(self.pick_pnt_1) != type(None)) and (type(self.pick_pnt_2) != type(None)):
+        self.autoguider_q.put(('move1to2', None))
+      response = 'ack'
+
     elif cmd.split()[0] == 'set_gamma_val':
       self.gamma = float(cmd.split()[1])
       self.autoguider_q.put(('set_gamma_lut', None))
@@ -628,6 +730,11 @@ class autoguider:
     elif cmd.split()[0] == 'set_bp_val':
       self.blackpoint = int(float(cmd.split()[1]))
       self.autoguider_q.put(('set_gamma_lut', None))
+      response = 'ack'
+
+    elif cmd.split()[0] == 'set_mag_val':
+      self.mag = int(float(cmd.split()[1]))
+      self.autoguider_q.put(('set_mag', None))
       response = 'ack'
 
     elif cmd.split()[0] == 'set_exposure_val':
@@ -644,7 +751,8 @@ class autoguider:
       response = 'ack'
 
     elif cmd == 'center_guide_star':
-#      self.autoguider_q.put(('center_guide_star', None))
+      if (type(self.pick_pnt_1) != type(None)):
+        self.autoguider_q.put(('center_guide_star', None))
       response = 'ack'
 
     elif cmd == 'toggle_guiding':
@@ -665,7 +773,13 @@ class autoguider:
       response = 'ack'
 
     elif cmd == 'guide_star_drift':
-      self.autoguider_q.put(('guide_star_drift', None))
+      if self.guiding:
+        self.autoguider_q.put(('guide_star_drift', None))
+      response = 'ack'
+
+    elif cmd == 'toggle_gcorr':
+      self.gcorr_plot = not self.gcorr_plot
+#      sys.stderr.write('Toggling Guide Correction Plot %s\r\n' % (str(self.gcorr_plot)))
       response = 'ack'
 
     elif cmd == 'get_status':
@@ -683,10 +797,14 @@ class autoguider:
     elif cmd == 'get_view':
       response = self.get_view()
 
+    elif cmd == 'scopeserver_status':
+      response = 'ack'
+
     elif cmd == 'reset_server':
-      pass
+      response = 'ack'
 
     elif cmd == 'quit_server':
+      response = 'ack'
       self.server_stop()
 
     elif cmd == 'reset_autoguider':
@@ -708,30 +826,36 @@ class autoguider:
 
 
   def init_cam(self):
-    sys.stderr.write('\r\n')
-    sys.stderr.write('Configuring Camera...\r\n')
+    sys.stderr.write('\r\nConfiguring Camera...\r\n')
 
     self.sensor_dimx = 3.68
     self.sensor_dimy = 2.76
     self.npix_x = 3280
     self.npix_y = 2464
-    self.arcsec_per_pixel = (3600/self.npix_x)*2*np.arctan(self.sensor_dimx/(2*240))*180/np.pi
-    self.ra_counts_per_arcsec=40000*576/(360*3600.)
-    self.dec_counts_per_arcsec=40000*450/(360*3600.)
+    self.arcsec_per_pixel = (3600.0/self.npix_x)*2*np.arctan(self.sensor_dimx/(2.0*240))*180.0/np.pi
+    self.fov_x = self.npix_x*self.arcsec_per_pixel
+    self.fov_y = self.npix_y*self.arcsec_per_pixel
+    self.ra_counts_per_arcsec = 40000*576/(360*3600.)
+    self.ra_arcsec_per_count = 1/self.ra_counts_per_arcsec
+    self.dec_counts_per_arcsec = 40000*450/(360*3600.)
+    self.dec_arcsec_per_count = 1/self.dec_counts_per_arcsec
     self.ra_counts_per_pixel = self.ra_counts_per_arcsec*self.arcsec_per_pixel
     self.dec_counts_per_pixel = self.dec_counts_per_arcsec*self.arcsec_per_pixel
 
     self.cam = picamera.PiCamera()
     self.cam.sensor_mode = 2
-    self.cam.resolution = (3280,2464)
-    self.cam.rotation = 180
+    self.cam.resolution = (self.npix_x, self.npix_y)
+    self.cam.rotation = 180*(self.meridian_mode==1)
 
 #    self.exposure = 1.0  # exposure time in seconds
 
     self.cam.framerate = 1/self.exposure
     self.cam.shutter_speed = int(self.exposure*1e6/1.0)
     self.cam.exposure_compensation = 24  # increase exposure by 4 stops
-    self.cam.iso = 800
+#    self.cam.iso = 800
+    self.cam.iso = 0
+    self.cam.analog_gain = 10.0
+    self.cam.digital_gain = 1.0
     self.cam.meter_mode = 'average'
     self.cam.exposure_mode = 'night'
     self.cam.image_denoise = False
@@ -742,22 +866,19 @@ class autoguider:
     self.cam.awb_mode = 'off'
     self.cam.awb_gains = g
 
-#    self.cam.capture('./init_image.jpg', use_video_port=True, quality=75)
-    # Capture to memory buffer:
-    img_buf = io.BytesIO()
-    sys.stderr.write('Capturing test image to buffer  \r\n')
-    self.cam.capture(img_buf, use_video_port=True, format='jpeg', quality=75)
-    img_buf.truncate()
-    img_buf.seek(0)
-    img_data = np.frombuffer(img_buf.getvalue(), dtype=np.uint8)
-    img = cv2.imdecode(img_data, cv2.IMREAD_GRAYSCALE)
-    img_buf.seek(0)
-    img_buf.truncate()
+    # Capture to numpy array:
+    img_y = np.empty((2464, 3296), dtype=np.uint8)
+    try:
+      sys.stderr.write('Capturing test image to numpy array  \r\n')
+      self.cam.capture(img_y, use_video_port=True, format='yuv')
+    except IOError:
+      pass
+    img = img_y[:2464, :3280]
     sys.stderr.write('  Captured: %s\r\n' % (str(img.shape)))
 
     sys.stderr.write('Camera ready:\r\n')
     sys.stderr.write('  Exposure: %s\r\n' % (str(self.cam.exposure_speed)))
-    sys.stderr.write('  ISO: %s\r\n' % (str(self.cam.iso)))
+    sys.stderr.write('  ISO: %s (gains fixed)\r\n' % (str(self.cam.iso)))
     sys.stderr.write('  Digital gain: %s\r\n' % (str(float(self.cam.digital_gain))))
     sys.stderr.write('  Analog gain: %s\r\n' % (str(float(self.cam.analog_gain))))
     sys.stderr.write('  AWB gains: %s\r\n' % (str(self.cam.awb_gains)))
@@ -784,14 +905,16 @@ class autoguider:
 
 
 
-  def nightshot(self):
+#  def nightshot(self):
+  def nightshot_jpeg(self):
 
     # Capture to memory buffer:
     img_buf = io.BytesIO()
-    if self.verbose:
-      sys.stderr.write('  Capturing image to buffer  \r\n')
+#    if self.verbose:
+#      sys.stderr.write('  Capturing image to buffer  \r\n')
     t0 = time.time()
 #    sys.stderr.write('\r\nCapturing image at t: %s\r\n' % (str(t0)))
+    self.cam.rotation = 180*(self.meridian_mode==1)
     self.cam.capture(img_buf, use_video_port=True, format='jpeg', quality=75)
     img_buf.truncate()
     img_buf.seek(0)
@@ -801,13 +924,16 @@ class autoguider:
 #    img = cv2.imdecode(img_data, cv2.IMREAD_GRAYSCALE)
     img_c = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
     img_g = cv2.cvtColor(img_c, cv2.COLOR_BGR2GRAY)
+    cv2.normalize(img_g, img_g, 0, 255, cv2.NORM_MINMAX)
 #    img = np.flipud(img)
     self.image = img_g
     self.image_c = img_c
+    self.prev_capture_time = self.capture_time
+    self.capture_time = time.time_ns()
 #    ofn = './images/image.jpg'
 #    cv2.imwrite(ofn, img, (cv2.IMWRITE_JPEG_QUALITY, 75))
-    if self.verbose:
-      sys.stderr.write('      Captured: %s\r\n' % (str(self.image_c.shape)))
+#    if self.verbose:
+#      sys.stderr.write('      Captured: %s\r\n' % (str(self.image_c.shape)))
 
 #    img = cv2.resize(img,(1600,1200))
 #    img_buf = io.BytesIO(cv2.imencode(".jpg", img, (cv2.IMWRITE_JPEG_QUALITY, 75))[1])
@@ -845,6 +971,46 @@ class autoguider:
     '''
 
 
+# nightshot in YUV Mode
+#  def nightshot_y(self):
+  def nightshot(self):
+
+    # Capture to numpy array:
+#    if self.verbose:
+#      sys.stderr.write('  Capturing image to numpy array  \r\n')
+    t0 = time.time()
+#    sys.stderr.write('\r\nCapturing image at t: %s\r\n' % (str(t0)))
+    self.cam.rotation = 180*(self.meridian_mode==1)
+    img_y = np.empty((2464, 3296), dtype=np.uint8)
+    try:
+      self.cam.capture(img_y, use_video_port=True, format='yuv')
+    except IOError:
+      pass
+    img_g = img_y[:2464, :3280]
+    img_y = None
+#    cv2.normalize(img_g, img_g, 0, 255, cv2.NORM_MINMAX)
+#    img = np.flipud(img)
+    self.image = img_g
+    img_g = None
+    # self.image_c = img_g
+    self.prev_capture_time = self.capture_time
+    self.capture_time = time.time_ns()
+#    ofn = './images/image.jpg'
+#    cv2.imwrite(ofn, img, (cv2.IMWRITE_JPEG_QUALITY, 75))
+#    if self.verbose:
+#      sys.stderr.write('      Captured: %s\r\n' % (str(self.image.shape)))
+
+    delay = self.autoguider_interval - self.exposure
+#    sys.stderr.write('    delaying: %s\r\n' % (str(delay)))
+    if delay > 0.0:
+#      time.sleep(delay)
+      pass
+
+    self.img_count += 1
+    gc.collect()
+
+
+
   def nightshot_sim(self):
 
     t0 = time.time()
@@ -865,9 +1031,14 @@ class autoguider:
 
 #    img_g = cv2.imread(img_fn, cv2.IMREAD_GRAYSCALE)
     img_c = cv2.imread(img_fn, cv2.IMREAD_UNCHANGED)
+    if self.meridian_mode == -1:
+      img_c = cv2.rotate(img_c, cv2.ROTATE_180)
     img_g = cv2.cvtColor(img_c, cv2.COLOR_BGR2GRAY)
+    cv2.normalize(img_g, img_g, 0, 255, cv2.NORM_MINMAX)
     self.image = img_g
     self.image_c = img_c
+    self.prev_capture_time = self.capture_time
+    self.capture_time = time.time_ns()
 
     if self.verbose:
       sys.stderr.write('Sim Image: %s\r\n' % (str(self.image_c.shape)))
@@ -915,37 +1086,66 @@ class autoguider:
 
 
   def make_guider_view(self):
-    if type(self.image_c) != type(None):
-#      img = cv2.resize(self.image_c,(1600,1200))
-      img = cv2.resize(self.image,(1600,1200))
-      img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-      '''
-      if type(self.cdf) == type(None):
-        hist,bins = np.histogram(img.flatten(),256,[0,256])
-        cdf = hist.cumsum()
-        cdf_m = np.ma.masked_equal(cdf,0)
-        cdf_m = (cdf_m - cdf_m.min())*255/(cdf_m.max()-cdf_m.min())
-        self.cdf = np.ma.filled(cdf_m,0).astype('uint8')
-      img = self.cdf[img]
-      '''
-#      img = img*2
-#      img = cv2.equalizeHist(img)
-#      R, G, B = cv2.split(img)
-#      Req = cv2.equalizeHist(R)
-#      Geq = cv2.equalizeHist(G)
-#      Beq = cv2.equalizeHist(B)
-#      img = cv2.merge((Req, Geq, Beq))
-#      img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-#      img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    else:
-      img = np.zeros((1200,1600,3),dtype=np.uint8)
-#      img = np.zeros((2464,3280,3),dtype=np.uint8)
+    view_w = 1600
+    view_h = 1200
+#    if type(self.image_c) == type(None):
+    if type(self.image) == type(None):
+#      img = np.zeros((self.npix_y,self.npix_x,3),dtype=np.uint8)
+      self.image = np.zeros((self.npix_y,self.npix_x,1),dtype=np.uint8)
+
+    if self.mag == 1:
+      mag_w = self.npix_x
+      mag_h = self.npix_y
+      x = 0
+      y = 0
+      img = cv2.resize(self.image,(view_w, view_h))
+    elif self.mag == 2:
+      mag_w = 1600
+      mag_h = 1200
+      x = int((self.npix_x-mag_w)/2)
+      y = int((self.npix_y-mag_h)/2)
+      img = self.image[y:(y+mag_h), x:(x+mag_w)]
+    elif self.mag == 3:
+      mag_w = 1067
+      mag_h = 800
+      x = int((self.npix_x-mag_w)/2)
+      y = int((self.npix_y-mag_h)/2)
+      img = self.image[y:(y+mag_h), x:(x+mag_w)]
+      img = cv2.resize(img,(view_w, view_h))
+    elif self.mag == 4:
+      mag_w = 800
+      mag_h = 600
+      x = int((self.npix_x-mag_w)/2)
+      y = int((self.npix_y-mag_h)/2)
+      img = self.image[y:(y+mag_h), x:(x+mag_w)]
+      img = cv2.resize(img,(view_w, view_h))
+
+    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    '''
+    if type(self.cdf) == type(None):
+      hist,bins = np.histogram(img.flatten(),256,[0,256])
+      cdf = hist.cumsum()
+      cdf_m = np.ma.masked_equal(cdf,0)
+      cdf_m = (cdf_m - cdf_m.min())*255/(cdf_m.max()-cdf_m.min())
+      self.cdf = np.ma.filled(cdf_m,0).astype('uint8')
+    img = self.cdf[img]
+    '''
+#    img = img*2
+#    img = cv2.equalizeHist(img)
+#    R, G, B = cv2.split(img)
+#    Req = cv2.equalizeHist(R)
+#    Geq = cv2.equalizeHist(G)
+#    Beq = cv2.equalizeHist(B)
+#    img = cv2.merge((Req, Geq, Beq))
+#    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+#    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+
+    self.view_scale = float(view_w)/mag_w
+    x_offset = -x
+    y_offset = -y
 
     img = cv2.LUT(img,self.gamma_lut)
-#    if self.status == 'imaging':
-#      img = cv2.LUT(img,self.gamma_lut)
 
-    rescale = 1600/3280.
     pil_img = Image.fromarray(img)
 #    pil_img = Image.fromarray(img).resize((1600,1200))
     font = ImageFont.truetype("/usr/share/fonts/dejavu/DejaVuSans.ttf", 48)
@@ -969,7 +1169,7 @@ class autoguider:
       text_label = 'Init Camera'
 
     #Status labels
-    text_label = '%s %d\n\u03B3=%g\nbp=%d\nexp=%g\ndt=%g' % (text_label, self.img_count, self.gamma, self.blackpoint, self.exposure, self.autoguider_interval)
+    text_label = '%s %d\n\u03B3=%g\nbp=%d\nmag=%d\nexp=%g\ndt=%g' % (text_label, self.img_count, self.gamma, self.blackpoint, self.mag, self.exposure, self.autoguider_interval)
     draw.text((50,50), text_label, (0xd0,0,0), font=font)
 
     #NSEW labels
@@ -982,20 +1182,85 @@ class autoguider:
     draw.text((10,575), e_label, (0xd0,0,0), font=font)
     draw.text((1542,575), w_label, (0xd0,0,0), font=font)
 
+    '''
+    if self.meridian_mode == 1:
+      draw.text((785,4), n_label, (0xd0,0,0), font=font)
+      draw.text((785,1140), s_label, (0xd0,0,0), font=font)
+      draw.text((10,575), e_label, (0xd0,0,0), font=font)
+      draw.text((1542,575), w_label, (0xd0,0,0), font=font)
+    else:
+      draw.text((785,1140), n_label, (0xd0,0,0), font=font)
+      draw.text((785,4), s_label, (0xd0,0,0), font=font)
+      draw.text((1542,575), e_label, (0xd0,0,0), font=font)
+      draw.text((10,575), w_label, (0xd0,0,0), font=font)
+    '''
+
     #Edges of image
     draw.line(((0,0),(1599,0)),fill=(0xd0,0,0),width=1)
     draw.line(((0,1199),(1599,1199)),fill=(0xd0,0,0),width=1)
     draw.line(((0,0),(0,1199)),fill=(0xd0,0,0),width=1)
     draw.line(((1599,0),(1599,1199)),fill=(0xd0,0,0),width=1)
 
+    arcmin = int(self.view_scale*(60.0/self.arcsec_per_pixel))
+    qarcmin = int(self.view_scale*(15.0/self.arcsec_per_pixel))
+
     #Draw Cross hairs
     draw.line(((800,0),(800,1199)),fill=(0xd0,0,0),width=1)
-    draw.line(((800+32,0),(800+32,1199)),fill=(0xd0,0,0),width=1)
-    draw.line(((800-32,0),(800-32,1199)),fill=(0xd0,0,0),width=1)
+    draw.line((((800+arcmin),0),((800+arcmin),1199)),fill=(0xd0,0,0),width=1)
+    draw.line((((800-arcmin),0),((800-arcmin),1199)),fill=(0xd0,0,0),width=1)
 
     draw.line(((0,600),(1599,600)),fill=(0xd0,0,0),width=1)
-    draw.line(((0,600+32),(1599,600+32)),fill=(0xd0,0,0),width=1)
-    draw.line(((0,600-32),(1599,600-32)),fill=(0xd0,0,0),width=1)
+    draw.line(((0,(600+arcmin)),(1599,(600+arcmin))),fill=(0xd0,0,0),width=1)
+    draw.line(((0,(600-arcmin)),(1599,(600-arcmin))),fill=(0xd0,0,0),width=1)
+
+    #Draw Tick Marks
+    #  Major Ticks X
+    for x in range((-20*arcmin), (20*arcmin+1), (10*arcmin)):
+      draw.line(((800+x,(600-2*arcmin)),(800+x,(600+2*arcmin))),fill=(0xd0,0,0),width=1)
+
+    #  Secondary Ticks X
+    for x in range((-25*arcmin), (25*arcmin+1), (5*arcmin)):
+      draw.line(((800+x,(600-1.5*arcmin)),(800+x,(600+1.5*arcmin))),fill=(0xd0,0,0),width=1)
+
+    #  Minor Ticks X
+    for x in range((-26*arcmin), (26*arcmin+1), (1*arcmin)):
+      draw.line(((800+x,(600-arcmin)),(800+x,(600+arcmin))),fill=(0xd0,0,0),width=1)
+      #  Micro Ticks X
+      if self.mag > 1:
+        for x_mic in range(x, x+arcmin-4, qarcmin):
+          draw.line(((800+x_mic,(600-qarcmin)),(800+x_mic,(600+qarcmin))),fill=(0xd0,0,0),width=1)
+
+
+    #  Major Ticks Y
+    for y in range((-20*arcmin), (20*arcmin+1), (10*arcmin)):
+      draw.line((((800-2*arcmin),600+y),((800+2*arcmin),600+y)),fill=(0xd0,0,0),width=1)
+
+    #  Secondary Ticks Y
+    for y in range((-20*arcmin), (20*arcmin+1), (5*arcmin)):
+      draw.line((((800-1.5*arcmin),600+y),((800+1.5*arcmin),600+y)),fill=(0xd0,0,0),width=1)
+
+    #  Minor Ticks Y
+    for y in range((-20*arcmin), (20*arcmin+1), (arcmin)):
+      draw.line((((800-arcmin),600+y),((800+arcmin),600+y)),fill=(0xd0,0,0),width=1)
+      #  Micro Ticks Y
+      if self.mag > 1:
+        for y_mic in range(y, y+arcmin-4, qarcmin):
+          draw.line((((800-qarcmin),600+y_mic),((800+qarcmin),600+y_mic)),fill=(0xd0,0,0),width=1)
+    
+    #Draw Pick Circles
+    if self.img_pick:
+      r = 30
+      position = self.pick_pnt_1[:-1]
+      xy = np.array([position-[r,r], position+[r,r]])
+      xy = tuple(map(tuple, xy))
+      draw.ellipse(xy, fill=None,outline=(0xd0,0,0), width=1)
+      draw.text(position-[14,27], '1', (0xd0,0,0), font=font)
+      if type(self.pick_pnt_2) != type(None):
+        position = self.pick_pnt_2[:-1]
+        xy = np.array([position-[r,r], position+[r,r]])
+        xy = tuple(map(tuple, xy))
+        draw.ellipse(xy, fill=None,outline=(0xd0,0,0), width=1)
+        draw.text(position-[14,27], '2', (0xd0,0,0), font=font)
 
     #Draw Inscribed Circle
     r = 599.0
@@ -1006,19 +1271,22 @@ class autoguider:
 
     # Box guide star and circle minor stars
     if (self.status == 'active_analyzing'):
-        xy = ( self.guide_star_rect_xy + np.array((self.driftRA,self.driftDEC)) )*rescale
+        xy = ( (x_offset, y_offset) + self.guide_star_rect_xy + np.array((self.driftRA,self.driftDEC)) )*self.view_scale
         xy = tuple(map(tuple, xy))
         draw.rectangle(xy,fill=None,outline=(0xd0,0,0),width=3)
     elif (self.status == 'found_guide_star') or (self.status == 'active_guiding'):
       if type(self.guide_star_rect_xy) != type(None):
-        xy = self.guide_star_rect_xy*rescale
+        xy = ((x_offset, y_offset) + self.guide_star_rect_xy)*self.view_scale
         xy = tuple(map(tuple, xy))
         draw.rectangle(xy,fill=None,outline=(0xd0,0,0),width=3)
+        # Draw X in Box
+        draw.line((xy[0],xy[1]),fill=(0xd0,0,0),width=1)
+        draw.line(((xy[0][0],xy[1][1]),(xy[1][0],xy[0][1])),fill=(0xd0,0,0),width=1)
         if self.status == 'found_guide_star':
           for position in self.positions:
             r = 16.0
             xy = np.array([position-[r,r],position+[r,r]])
-            xy = xy*rescale
+            xy = ((x_offset, y_offset) + xy)*self.view_scale
             xy = tuple(map(tuple, xy))
             draw.ellipse(xy,fill=None,outline=(0xd0,0,0),width=3)
     del draw
@@ -1041,27 +1309,52 @@ class autoguider:
     ax.xaxis.label.set_color('#d00000')
     ax.title.set_color('#d00000')
 
-    t = self.drift_ana[:,0]
-    ra = self.drift_ana[:,1]
-    dec = self.drift_ana[:,2]
+    t = self.drift_ana[1:,0]
+    ra = self.drift_ana[1:,1]
+    dec = self.drift_ana[1:,2]
+    pex_idx = self.drift_ana[1:,3]
 
-    ax.scatter(t, ra, marker='o', s=25, edgecolors='#d00000', facecolors='none')
-    ax.scatter(t, dec, marker='^', s=25, edgecolors='#d00000', facecolors='none')
+    if len(t) < 300:
+      ax.scatter(t, ra, marker='o', s=25, edgecolors='#d00000', facecolors='none')
+      ax.scatter(t, dec, marker='^', s=25, edgecolors='#d00000', facecolors='none')
+    else:
+      ax.scatter(t[-300:], ra[-300:], marker='o', s=25, edgecolors='#d00000', facecolors='none')
+      ax.scatter(t[-300:], dec[-300:], marker='^', s=25, edgecolors='#d00000', facecolors='none')
 
     if len(t) > 1:
       t_lin = np.array([t.min(),t.max()])
-      (m,b,r,p,stderr) = sps.linregress(t, ra)
-      mm_ra = to_precision(m,2)
-      ra_lin = (m*t_lin) + b
-      (m,b,r,p,stderr) = sps.linregress(t, dec)
-      mm_dec = to_precision(m,2)
-      dec_lin = (m*t_lin) + b
+      (m_ra,b,r,p,stderr) = sps.linregress(t, ra)
+      mm_ra = to_precision(m_ra,2)
+      ra_lin = (m_ra*t_lin) + b
+      (m_dec,b,r,p,stderr) = sps.linregress(t, dec)
+      c_dec = (self.fov_x/60.)*m_dec/0.42
+      mm_dec = to_precision(m_dec,2)
+      cc_dec = to_precision(c_dec,2)
+      dec_lin = (m_dec*t_lin) + b
+      if len(t) > 300:
+        t_lin = np.array([t[-300],t[-1]])
+        ra_lin = (m_ra*t_lin) + b
+        dec_lin = (m_dec*t_lin) + b
       ax.plot(t_lin, ra_lin, color='#d00000')
       ax.plot(t_lin, dec_lin, color='#d00000', linestyle='--')
 
-      ax.text(0.05, 0.95, 'm_ra = %s\nm_dec = %s' % (mm_ra, mm_dec),
-        verticalalignment='top', horizontalalignment='left',
-        transform = ax.transAxes, fontsize=10, color='#d00000')
+      ax.set_xlabel(r'time (s)',labelpad=1)
+      ax.set_ylabel(r'displacement (arcsec)',labelpad=1)
+
+      if (c_dec > 0):  # Drifting South
+        if self.meridian_mode == 1:
+          corr_orient = '(W,S)'
+        else:
+          corr_orient = '(W,N)'
+      else:  # Drifting North
+        if self.meridian_mode == 1:
+          corr_orient = '(E,N)'
+        else:
+          corr_orient = '(E,S)'
+
+      ax.text(0.05, 0.95, "m_ra = %s\nm_dec = %s\ncorr = %s' %s" % (mm_ra, mm_dec, cc_dec, corr_orient),
+      verticalalignment='top', horizontalalignment='left',
+      transform = ax.transAxes, fontsize=10, color='#d00000')
 
 
     img_buf = io.BytesIO()
@@ -1071,6 +1364,10 @@ class autoguider:
 
 
   def find_guide_star(self):
+    self.find_guide_star_v2()
+
+
+  def find_guide_star_v2(self):  
 
     self.make_guider_view()
 
@@ -1080,8 +1377,66 @@ class autoguider:
     self.ref_image = self.image
     img = self.ref_image
 
-    w = 128
-    h = 128
+#    w = 128
+#    h = 128
+    w = 256
+    h = 256
+
+#    limg = np.arcsinh(img).astype('float32')
+    limg = img.astype('float32')
+    limg = limg / limg.max()
+#    low = np.percentile(limg, 0.25)
+#    high = np.percentile(limg, 99.5)
+#    opt_img  = skie.exposure.rescale_intensity(limg, in_range=(low,high))
+
+#    lm = morph.is_local_maximum(limg)
+#    x1, y1 = np.where(lm.T == True)
+    y1, x1 = morph.local_maxima(limg,connectivity=1,indices=True)
+    v = limg[(y1,x1)]
+#    lim = 0.78
+    lim = 0.25
+#    lim = 0.15
+    sources = np.array((x1[v > lim], y1[v > lim])).transpose()
+    sources = sources[(limg[sources[:,1],sources[:,0]]).argsort()[::-1]]
+#    print(sources)
+
+    if len(sources) == 0:
+      self.status = 'no_guide_star_found'
+      self.make_guider_view()
+      if self.verbose:
+        sys.stderr.write('\r\nNo Guide Star Found\r\n')
+      return
+
+    self.guide_star_pos = sources[0]
+    self.guide_star_rect = np.array([self.guide_star_pos-[w/2.,h/2.],w,h])
+    self.guide_star_rect_xy = np.array( [self.guide_star_pos-[w/2.,h/2.],self.guide_star_pos+[w/2.,h/2.]] )
+    self.positions = sources
+
+    swim_dir = os.path.join(self.dir_path,'swim_tmp')
+    img_ref_fn = os.path.join(swim_dir,'guide_ref.jpg')
+    self.image_crop_rect(img, self.guide_star_rect, img_ref_fn)
+
+    self.status = 'found_guide_star'
+    self.make_guider_view()
+    if self.verbose:
+      sys.stderr.write('Found Guide Star\r\n')
+
+
+
+  def find_guide_star_v1(self):
+
+    self.make_guider_view()
+
+    if self.verbose:
+      sys.stderr.write('Finding Guide Star...\r\n')
+
+    self.ref_image = self.image
+    img = self.ref_image
+
+#    w = 128
+#    h = 128
+    w = 256
+    h = 256
 
     mean, median, std = sigma_clipped_stats(img, sigma=3.0)
     bkg_sigma = mad_std(img)
@@ -1102,7 +1457,7 @@ class autoguider:
       self.status = 'no_guide_star_found'
       self.make_guider_view()
       if self.verbose:
-        sys.stderr.write('\rNo Guide Star Found\r\n')
+        sys.stderr.write('\r\nNo Guide Star Found\r\n')
       return
 
 #    print('')
@@ -1117,7 +1472,7 @@ class autoguider:
       self.status = 'no_guide_star_found'
       self.make_guider_view()
       if self.verbose:
-        sys.stderr.write('\rNo Guide Star Found\r\n')
+        sys.stderr.write('\r\nNo Guide Star Found\r\n')
       return
 
     self.guide_star_pos = np.array([sources['xcentroid'][0],sources['ycentroid'][0]])
@@ -1186,22 +1541,29 @@ class autoguider:
     swim_dir = os.path.join(self.dir_path,'swim_tmp')
     img_ref_fn = os.path.join(swim_dir,'guide_ref.jpg')
     img_update_fn = os.path.join(swim_dir,'guide_update.jpg')
+    img_keep_fn = os.path.join(swim_dir,'keep.JPG')
 
     guide_star_dat = np.empty((0,5))
     guide_star_dat = np.append(guide_star_dat,[0,0,0,0,0]).reshape(-1,5)
 
     dx = self.driftRA
     dy = self.driftDEC
-    w = 128
-    h = 128
+#    w = 128
+#    h = 128
+    w = 256
+    h = 256
 
     guide_update_rect = np.array([self.guide_star_pos+[dx,dy]-[w/2.,h/2.],w,h])
     self.image_crop_rect(self.image, guide_update_rect, img_update_fn)
 
-    swim_cmd_template = '/home/pi/bin/swim 128 -i 2 -w -0.61 %s %s'
-    swim_cmd = swim_cmd_template % (img_ref_fn, img_update_fn)
+    swim_cmd_template = '/home/pi/bin/swim %d -i 2 -w -0.71 %s %s'
+    swim_cmd = swim_cmd_template % (w, img_ref_fn, img_update_fn)
+
+#    swim_cmd_template = '/home/pi/bin/swim %d -i 2 -w -0.71 -keep %s %s %s'
+#    swim_cmd = swim_cmd_template % (w, img_keep_fn, img_ref_fn, img_update_fn)
+
 #    sys.stderr.write('%s\r\n' % (swim_cmd))
-    swim_log = sp.run([swim_cmd],shell=True,stdout=sp.PIPE,stderr=sp.PIPE)
+    swim_log = sp.run([swim_cmd],cwd=swim_dir,shell=True,stdout=sp.PIPE,stderr=sp.PIPE)
     swim_stdout = swim_log.stdout.decode('utf-8')
     swim_stderr = swim_log.stdout.decode('utf-8')
     toks = swim_stdout.split()
@@ -1209,14 +1571,22 @@ class autoguider:
     snr = float(toks[0][0:-1])
     dxi = float(toks[8][1:])
     dyi = float(toks[9])
-    dx += dxi
-    dy += dyi
 #    self.driftRA += int(dxi*self.ra_counts_per_pixel)
 #    self.driftDEC += int(dyi*self.dec_counts_per_pixel)
     self.driftRA += dxi
     self.driftDEC += dyi
-    self.drift_ana = np.append(self.drift_ana, np.array([[self.drift_dt,self.driftRA,self.driftDEC]]), axis=0)
+    driftRA_arcsec = self.driftRA*self.arcsec_per_pixel
+    driftDEC_arcsec = self.driftDEC*self.arcsec_per_pixel
+    if len(self.drift_ana) == 0:
+      self.drift_ana = np.append(self.drift_ana, np.array([[0.0,driftRA_arcsec,driftDEC_arcsec,self.pec_idx]]), axis=0)
+    elif len(self.drift_ana) == 1:
+      self.drift_ana = np.append(self.drift_ana, np.array([[0.0,driftRA_arcsec,driftDEC_arcsec,self.pec_idx]]), axis=0)
+    else:
+      dt = (self.capture_time - self.prev_capture_time)*1e-9
+      t = dt + self.drift_ana[-1][0]
+      self.drift_ana = np.append(self.drift_ana, np.array([[t,driftRA_arcsec,driftDEC_arcsec,self.pec_idx]]), axis=0)
 
+    sys.stderr.write('swim match:  SNR: %g  driftRA: %.4g  driftDEC: %.4g\r\n' % (snr, self.driftRA, self.driftDEC))
     if self.verbose:
       sys.stderr.write('swim match:  SNR: %g  driftRA: %.4g  driftDEC: %.4g\r\n' % (snr, self.driftRA, self.driftDEC))
 
@@ -1231,22 +1601,25 @@ class autoguider:
     swim_dir = os.path.join(self.dir_path,'swim_tmp')
     img_ref_fn = os.path.join(swim_dir,'guide_ref.jpg')
     img_update_fn = os.path.join(swim_dir,'guide_update.jpg')
+    img_keep_fn = os.path.join(swim_dir,'keep.JPG')
 
     guide_star_dat = np.empty((0,5))
     guide_star_dat = np.append(guide_star_dat,[0,0,0,0,0]).reshape(-1,5)
 
     dx = 0
     dy = 0
-    w = 128
-    h = 128
+#    w = 128
+#    h = 128
+    w = 256
+    h = 256
 
     guide_update_rect = np.array([self.guide_star_pos+[dx,dy]-[w/2.,h/2.],w,h])
     self.image_crop_rect(self.image, guide_update_rect, img_update_fn)
 
-    swim_cmd_template = '/home/pi/bin/swim 128 -i 2 -w -0.61 %s %s'
-    swim_cmd = swim_cmd_template % (img_ref_fn, img_update_fn)
+    swim_cmd_template = '/home/pi/bin/swim %d -i 2 -w -0.71 -keep %s %s %s'
+    swim_cmd = swim_cmd_template % (w, img_keep_fn, img_ref_fn, img_update_fn)
 #    sys.stderr.write('%s\r\n' % (swim_cmd))
-    swim_log = sp.run([swim_cmd],shell=True,stdout=sp.PIPE,stderr=sp.PIPE)
+    swim_log = sp.run([swim_cmd],cwd=swim_dir,shell=True,stdout=sp.PIPE,stderr=sp.PIPE)
     swim_stdout = swim_log.stdout.decode('utf-8')
     swim_stderr = swim_log.stdout.decode('utf-8')
     toks = swim_stdout.split()
@@ -1256,22 +1629,131 @@ class autoguider:
     dyi = float(toks[9])
     dx += dxi
     dy += dyi
-    self.dRA = int(dxi*self.ra_counts_per_pixel)
-    self.dDEC = int(dyi*self.dec_counts_per_pixel)
+    self.dRA = int(0.5*dxi*self.ra_counts_per_pixel)
+    self.dDEC = int(0.5*dyi*self.dec_counts_per_pixel)
     self.correction_log.write('%d %d\n' % (self.dRA, self.dDEC))
 
+    sys.stderr.write('swim match:  SNR: %g  dRA: %d  dDEC: %d\r\n' % (snr, self.dRA, self.dDEC))
     if self.verbose:
       sys.stderr.write('swim match:  SNR: %g  dRA: %d  dDEC: %d\r\n' % (snr, self.dRA, self.dDEC))
 
 #    guide_star_dat = np.append(guide_star_dat,[t,dx,dy,dxi,dyi]).reshape(-1,5)
+    if len(self.drift_corr) == 0:
+      self.drift_corr = np.append(self.drift_corr, np.array([[0.0,self.dRA,self.dDEC]]), axis=0)
+    elif len(self.drift_corr) == 1:
+      self.drift_corr = np.append(self.drift_corr, np.array([[0.0,self.dRA,self.dDEC]]), axis=0)
+    else:
+      dt = (self.capture_time - self.prev_capture_time)*1e-9
+      t = dt + self.drift_corr[-1][0]
+      self.drift_corr = np.append(self.drift_corr, np.array([[t,self.dRA,self.dDEC]]), axis=0)
 
-    self.make_guider_view()
+    if self.gcorr_plot:
+      self.plot_guide_star_corrections()
+    else:
+      self.make_guider_view()
 
 
-  def scopeserver_guide_star_correction(self):
+  def plot_guide_star_corrections(self):
+    img = self.image
+    plt.style.use('dark_background')
+    fig,ax = plt.subplots(1)
+    ax.spines['bottom'].set_color('#d00000')
+    ax.spines['top'].set_color('#d00000') 
+    ax.spines['right'].set_color('#d00000')
+    ax.spines['left'].set_color('#d00000')
+    ax.tick_params(axis='x', colors='#d00000', which='both')
+    ax.tick_params(axis='y', colors='#d00000', which='both')
+    ax.yaxis.label.set_color('#d00000')
+    ax.xaxis.label.set_color('#d00000')
+    ax.title.set_color('#d00000')
+
+    ax2 = ax.twinx() 
+    ax2.spines['bottom'].set_color('#d00000')
+    ax2.spines['top'].set_color('#d00000') 
+    ax2.spines['right'].set_color('#d00000')
+    ax2.spines['left'].set_color('#d00000')
+    ax2.tick_params(axis='x', colors='#d00000', which='both')
+    ax2.tick_params(axis='y', colors='#d00000', which='both')
+    ax2.yaxis.label.set_color('#d00000')
+    ax2.xaxis.label.set_color('#d00000')
+
+    t = self.drift_corr[:,0]
+    ra = self.drift_corr[:,1]
+    dec = self.drift_corr[:,2]
+
+    ax.scatter(t, ra, marker='o', s=25, edgecolors='#d00000', facecolors='none')
+    ax.scatter(t, dec, marker='^', s=25, edgecolors='#d00000', facecolors='none')
+
+    if len(t) > 1:
+      t_lin = np.array([t.min(),t.max()])
+      (m_ra,b,r,p,stderr) = sps.linregress(t, ra)
+      mm_ra = to_precision(m_ra,2)
+      ra_lin = (m_ra*t_lin) + b
+      (m_dec,b,r,p,stderr) = sps.linregress(t, dec)
+      mm_dec = to_precision(m_dec,2)
+      dec_lin = (m_dec*t_lin) + b
+      ax.plot(t_lin, ra_lin, color='#d00000')
+      ax.plot(t_lin, dec_lin, color='#d00000', linestyle='--')
+
+      ax.set_xlabel(r'time (s)',labelpad=1)
+      ax.set_ylabel(r'guide correction (counts)',labelpad=1)
+
+      ax2.set_ylabel(r'guide correction (arcsecs)',labelpad=1)
+
+      ax.set_ylim([np.min((ra.min(),dec.min())), np.max((ra.max(),dec.max()))])
+      ax2.set_ylim([self.ra_arcsec_per_count*np.min((ra.min(),dec.min())), self.ra_arcsec_per_count*np.max((ra.max(),dec.max()))])
+
+      ax.text(0.05, 0.95, 'm_ra = %s\nm_dec = %s' % (mm_ra, mm_dec),
+      verticalalignment='top', horizontalalignment='left',
+      transform = ax.transAxes, fontsize=10, color='#d00000')
+
+
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf, format='png')
+    plt.close()
+    self.guider_view = 'data:image/png;base64,' + base64.b64encode(img_buf.getvalue()).decode('utf-8')
+
+
+  def scopeserver_guide_star_correction(self, reset_target = False):
     HOST = self.scopeserver_host
     PORT = self.scopeserver_port
-    cmd = '{guide_star_correction %d %d}' % (self.dRA, self.dDEC)
+    cmd = '{guide_star_correction %d %d %s}' % (self.dRA, self.dDEC, str(reset_target))
+
+    if self.verbose:
+      sys.stderr.write('\r\nAuto Guider Sending:  %s\r\n' % (cmd))
+
+    # Create a socket (SOCK_STREAM means a TCP socket)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+      # Connect to server and send cmd
+      try:
+        sock.settimeout(0.1)
+        sock.connect((HOST, PORT))
+        sock.settimeout(None)
+        sock.sendall(bytes(cmd, 'utf-8'))
+    
+        # Receive response from the server and finish
+        response = str(sock.recv(1024), 'utf-8')
+      except:
+        response = ''
+      finally:
+        sock.close()
+
+    if self.verbose:
+      sys.stderr.write('  AutoGuider Correction Sent:  %s\r\n' % (cmd))
+      sys.stderr.write('  AutoGuider Received:  %s\r\n' % (response))
+    if response == 'ack':
+      self.scopeserver_connected = True
+    else:
+      self.scopeserver_connected = False
+      sys.stderr.write('Guide Star Correction Failed: ScopeServer Not Connected\r\n')
+      sys.stderr.write('Attempting to Reconnect...\r\n')
+      self.autoguider_q.put(('ss_connect', None))
+
+
+  def get_scopeserver_status(self):
+    HOST = self.scopeserver_host
+    PORT = self.scopeserver_port
+    cmd = '{get_small_status}'
 
 #    sys.stderr.write('\r\nAuto Guider Sending:    %s\r\n' % (cmd))
     # Create a socket (SOCK_STREAM means a TCP socket)
@@ -1292,11 +1774,19 @@ class autoguider:
 
 #    sys.stderr.write('Auto Guider Sent:       %s\r\n' % (cmd))
 #    sys.stderr.write('Auto Guider Received:   %s\r\n' % (response))
-    if response == 'ack':
+    if response:
+      status = eval(response)
+      self.pos_ra = int(status['ra_pos'])
+      self.pos_dec = int(status['dec_pos'])
+      self.pec_idx = int(status['pec_idx'])
+      if int(status['meridian_mode']) != self.meridian_mode:
+        meridian_mode = int(status['meridian_mode'])
+        self.autoguider_q.put(('update_meridian_mode', meridian_mode))
+#      sys.stderr.write('2) setting meridian_mode: %d\r\n' % (meridian_mode))
       self.scopeserver_connected = True
     else:
       self.scopeserver_connected = False
-      sys.stderr.write('Guide Star Correction Failed: ScopeServer Not Connected\r\n')
+      sys.stderr.write('Get ScopeServer Status Failed: ScopeServer Not Connected\r\n')
 
 
   def sync_time(self):

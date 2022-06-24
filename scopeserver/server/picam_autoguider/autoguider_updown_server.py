@@ -89,6 +89,7 @@ class autoguider_updown:
     self.autoguider_ud_host = server_address
     self.autoguider_ud_port = port
     host_dict = {}
+    host_dict['10.0.1.14'] = '10.0.1.13'
     host_dict['10.0.1.23'] = '10.0.1.20'
     host_dict['10.0.1.24'] = '10.0.1.23'
     host_dict['192.168.50.10'] = '192.168.50.5'
