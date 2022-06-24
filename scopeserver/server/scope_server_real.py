@@ -35,7 +35,7 @@ def signal_handler(signal, frame):
   except:
     pass
   sys.stderr.write('\r\nScoperServer caught signal %d\r\n' % (signal))
-  sys.stderr.write('ScopeServer shutting down.\r\n')
+  sys.stderr.write('ScopeServer shutting down...\r\n')
   nmc_net.modules['RA'].ServoStopMotorOff()
   nmc_net.modules['Dec'].ServoStopMotorOff()
 
@@ -172,7 +172,7 @@ class scope_server:
   def __init__(self, server_address, port, scope_mode = 'REAL_SCOPE'):
     global nmc_net
     self.scope_mode = scope_mode  # allowed: 'SIM_SCOPE'  or  'REAL_SCOPE'
-    self.verbose = False
+    self.verbose = True
     self.input_running = False
     self.server_running = False
     self.motion_q = queue.Queue(maxsize=0)
@@ -181,6 +181,7 @@ class scope_server:
     self.scopeserver_host = server_address
     self.scopeserver_port = port
     host_dict = {}
+    host_dict['10.0.1.13'] = '10.0.1.14'
     host_dict['10.0.1.20'] = '10.0.1.23'
     host_dict['10.0.1.23'] = '10.0.1.24'
     host_dict['192.168.50.5'] = '192.168.50.10'
@@ -197,11 +198,16 @@ class scope_server:
     self.autoguider_mag = 1
     self.autoguider_exposure = 1.0
     self.autoguider_interval = 1.0
+    self.guide_correction_max_iters = 100
+    self.guide_correction_iters = 0
 
     self.dec_axis_running = False
     self.dec_axis_goto = False
     self.ra_axis_running = False
     self.ra_axis_goto = False
+    # high precision mode updates the pos_ra of the RA target on every iteration
+    # low precision mode does not update the pos_ra of the RA target
+    self.ra_axis_goto_precision = 'high'  # high, low
     self.ra_axis_tracking = False
     self.pec_tracking = True
     self.pec_tracking_status = 'ready'  # allowed values: 'ready' 'cancel'
@@ -314,7 +320,7 @@ class scope_server:
     self.slew_rate = self.slew_rate_max
     self.slew_rate_find = self.slew_rate_max/10
     self.slew_rate_center = self.slew_rate_max/50
-    self.slew_rate_correction = 3*self.sidereal_rate
+    self.slew_rate_correction = 1.5*self.sidereal_rate
     self.slew_rate_track = self.sidereal_rate
 
     self.timezone = time.timezone
@@ -333,7 +339,7 @@ class scope_server:
     self.target_dec_angle = "+00*00:00"
 #    self.target_epsilon_1 = 1.0/2.0
     self.target_epsilon_1 = 300.0
-    self.target_epsilon_2 = 3.0
+    self.target_epsilon_2 = 2.0
 
     self.dRA = 0
     self.adj_RA = 0
@@ -363,7 +369,7 @@ class scope_server:
 
 
       self.servo_accel = 4000  # 4000
-      self.servo_correction_accel = 4000  # 4000
+      self.servo_correction_accel = 32000  # 4000
       self.motor_current_ra = 0
       self.motor_current_dec = 0
       self.pos_error_ra = 0
@@ -866,7 +872,7 @@ class scope_server:
           motion_cmd = ('motion_continue', None)
       else:
         # if not in motion wait to receive motion command
-#        sys.stderr.write('motion_control: idle, waiting for command\r\n')
+#        sys.stderr.write('motion_control: idle, waiting for command...\r\n')
         motion_cmd = self.motion_q.get()
 
       cmd = motion_cmd[0]
@@ -1149,8 +1155,18 @@ class scope_server:
         target_distance = math.sqrt(ra_distance**2 + dec_distance**2)
         ra_speed = abs(ra_distance/target_distance)
         dec_speed = abs(dec_distance/target_distance)
-        self.servo_ra_goto_rate = int(ra_speed*self.slew_rate*0.000512*2**16)
-        self.servo_dec_goto_rate = int(dec_speed*self.slew_rate*0.000512*2**16)
+        if cmd_arg == 'center_rate':
+          self.servo_ra_goto_rate = int(self.slew_rate_find*0.000512*2**16)
+          self.servo_dec_goto_rate = int(self.slew_rate_find*0.000512*2**16)
+          accel = self.servo_accel
+        elif cmd_arg == 'correction_rate':
+          self.servo_ra_goto_rate = int(self.slew_rate_correction*0.000512*2**16)
+          self.servo_dec_goto_rate = int(self.slew_rate_correction*0.000512*2**16)
+          accel = self.servo_correction_accel
+        else:
+          self.servo_ra_goto_rate = int(ra_speed*self.slew_rate*0.000512*2**16)
+          self.servo_dec_goto_rate = int(dec_speed*self.slew_rate*0.000512*2**16)
+          accel = self.servo_accel
 
         # RA GOTO Target at goto rate
         self.ra_axis_running = True
@@ -1175,8 +1191,8 @@ class scope_server:
         self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
         self.dec_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
 
-        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_goto_rate, self.servo_accel, 0)
-        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), self.servo_dec_goto_rate, self.servo_accel, 0)
+        self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_goto_rate, accel, 0)
+        self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), self.servo_dec_goto_rate, accel, 0)
 
       elif cmd == 'goto_target_stop':
         if self.verbose:
@@ -1235,25 +1251,54 @@ class scope_server:
           self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
           self.pos_error_ra = self.ra_mod.status_dict['pos_error']
         else:
+          # Update target_ra_pos for high precision goto
           self.pos_ra = self.ra_mod.ServoGetPos()
-          self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
-          target_ra_delta = (self.pos_ra - self.target_ra_pos)
-          # sys.stderr.write('RA GOTO target_ra_delta = %d\r\n' % (target_ra_delta))
-          target_ra_delta = abs(self.pos_ra - self.target_ra_pos)
-          # Continue GOTO until we're within target_epsilon_2 
-          if target_ra_delta > self.target_epsilon_2:
-            if target_ra_delta > self.target_epsilon_1:
-              # Move at current slew rate until we're within target_epsilon_1
-              self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
-              # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
-              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_goto_rate, self.servo_accel, 0)
-              # sys.stderr.write('Slewing to within target_epsilon_1: %d\r\n' % (target_ra_delta))
+          if self.ra_axis_goto_precision == 'high':
+            self.target_ra_pos = self.ra_time_array_to_pos(self.target_ra_time_array)
+            target_ra_delta = (self.pos_ra - self.target_ra_pos)
+            # sys.stderr.write('RA GOTO target_ra_delta = %d\r\n' % (target_ra_delta))
+            target_ra_delta = abs(self.pos_ra - self.target_ra_pos)
+            # Continue GOTO until we're within target_epsilon_2 
+            if target_ra_delta > self.target_epsilon_2:
+              if target_ra_delta > self.target_epsilon_1:
+                if self.verbose:
+                  sys.stderr.write('Slewing to within target_epsilon_1: %d\r\n' % (target_ra_delta))
+                # Move at current slew rate until we're within target_epsilon_1
+                self.ra_mod.ServoSetGain(self.Kp_f, self.Kd_f, self.Ki_f, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
+                # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+                self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_goto_rate, self.servo_accel, 0)
+#              else:
+              else:
+                if self.verbose:
+                  sys.stderr.write('Slewing RA to within target_epsilon_2: %d\r\n' % (target_ra_delta))
+                if self.autoguider_guiding:
+                  # Move at correction slew rate until we're within target_epsilon_2
+                  # self.ra_mod.ServoSetGain(self.Kp_s, self.Kd_s, self.Ki_s, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
+                  self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_correction_rate, self.servo_correction_accel, 0)
+                  # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
+                else:
+                  self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_goto_rate, self.servo_accel, 0)
             else:
-              # Move at correction slew rate until we're within target_epsilon_2
-              # self.ra_mod.ServoSetGain(self.Kp_s, self.Kd_s, self.Ki_s, self.IL, self.OL, self.CL, self.EL, self.SR, self.DB, self.SM)
-              self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), self.servo_ra_correction_rate, self.servo_correction_accel, 0)
-              # self.ra_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_ra_pos), 0)
-              # sys.stderr.write('Slewing to within target_epsilon_2: %d\r\n' % (target_ra_delta))
+              # We're now within epsilon_2 so we can stop the correction
+              # and resume tracking
+              if self.verbose:
+                sys.stderr.write('Within epsilon_2. Resume tracking...\r\n')
+              # RA Servo Off
+              self.ra_mod.ServoStopMotorOff()
+              self.ra_axis_running = False
+              self.ra_axis_tracking = False
+              self.pec_tracking_status = 'ready'
+              self.ra_axis_homing = False
+              self.ra_axis_darv_pause = False
+              self.ra_axis_darv_east = False
+              self.ra_axis_darv_west = False
+              self.ra_axis_goto = False
+              self.ra_mod.ReadStatus(self.status_bits_ra)
+              self.pos_ra = self.ra_mod.status_dict['pos']
+              self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
+              self.pos_error_ra = self.ra_mod.status_dict['pos_error']
+              self.guide_correction_iters = 0
+              self.motion_q.put(('ra_track_start', None))
 
       if self.ra_axis_running | self.ra_axis_tracking:
         if self.ra_mod.module_error:
@@ -1347,9 +1392,10 @@ class scope_server:
               self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), self.servo_dec_goto_rate, self.servo_accel, 0)
               # sys.stderr.write('Slewing to within target_epsilon_1: %d\r\n' % (target_dec_delta))
             else:
+              if self.verbose:
+                sys.stderr.write('Slewing DEC to within target_epsilon_2: %d\r\n' % (target_dec_delta))
               # Move at correction slew rate until we're within target_epsilon_2
               self.dec_mod.ServoLoadTraj(nmccom.LOAD_POS | nmccom.LOAD_VEL | nmccom.LOAD_ACC | nmccom.ENABLE_SERVO | nmccom.START_NOW, int(self.target_dec_pos), self.servo_dec_correction_rate, self.servo_correction_accel, 0)
-              # sys.stderr.write('Slewing to within target_epsilon_2: %d\r\n' % (target_dec_delta))
 
       if self.dec_axis_running:
         if self.dec_mod.module_error:
@@ -1378,15 +1424,56 @@ class scope_server:
             self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
             self.pos_error_dec = self.dec_mod.status_dict['pos_error']
 
-      if self.guide_correction_pending and not (self.ra_axis_goto or self.dec_axis_goto):
+
+      # Redundant method to terminate guide correction:
+      if self.guide_correction_pending and (self.ra_axis_goto or self.dec_axis_goto):
+        # if a correction is pending and the GOTO is not finished
+        # then increment the correction iterations counter
+        self.guide_correction_iters += 1
+
+        if self.guide_correction_iters > self.guide_correction_max_iters:
+          # If we've exceeded the max iterations then just resume tracking
+          if self.verbose:
+            sys.stderr.write('Max correction iters exceeded. Resume tracking...\r\n')
+          # DEC Servo Off
+          self.dec_mod.ServoStopMotorOff()
+          self.dec_axis_running = False
+          self.dec_axis_goto = False
+          self.dec_mod.ReadStatus(self.status_bits_dec)
+          self.pos_dec = self.dec_mod.status_dict['pos']
+          self.motor_current_dec = self.dec_mod.status_dict['cur_sense']
+          self.pos_error_dec = self.dec_mod.status_dict['pos_error']
+          # RA Servo Off
+          self.ra_mod.ServoStopMotorOff()
+          self.ra_axis_running = False
+          self.ra_axis_tracking = False
+          self.pec_tracking_status = 'ready'
+          self.ra_axis_homing = False
+          self.ra_axis_darv_pause = False
+          self.ra_axis_darv_east = False
+          self.ra_axis_darv_west = False
+          self.ra_axis_goto = False
+          self.ra_mod.ReadStatus(self.status_bits_ra)
+          self.pos_ra = self.ra_mod.status_dict['pos']
+          self.motor_current_ra = self.ra_mod.status_dict['cur_sense']
+          self.pos_error_ra = self.ra_mod.status_dict['pos_error']
+          self.guide_correction_iters = 0
+          self.motion_q.put(('ra_track_start', None))
+
+
+#      if self.guide_correction_pending and not (self.ra_axis_goto or self.dec_axis_goto):
+      if self.guide_correction_pending and self.ra_axis_tracking and not self.dec_axis_goto:
         # If a correction is pending and the GOTO is finished
-        # we've just finished making the correction so trigger the next cycle:
+        # then we've just finished making the correction
         self.guide_correction_pending = False
         self.dRA = 0
         self.adj_RA = 0.0
         self.dDEC = 0
-#        sys.stderr.write('trigger autoguider\r\n')
-        self.autoguider_guide_star_drift()
+        # If we're guiding then trigger the next cycle:
+        if self.autoguider_guiding:
+          if self.verbose:
+            sys.stderr.write('triggering autoguider...\r\n')
+          self.autoguider_guide_star_drift()
 
 
       self.motion_running = self.ra_axis_running | self.ra_axis_tracking | self.dec_axis_running
@@ -1441,7 +1528,7 @@ class scope_server:
   def server_stop(self):
     if self.server_running:
       self.server_running=False
-      sys.stderr.write('ScopeServer shutting down.\r\n')
+      sys.stderr.write('ScopeServer shutting down...\r\n')
 
       # Shutdown NMC Network
       self.ra_mod.ServoStopMotorOff()
@@ -1577,10 +1664,11 @@ class scope_server:
       self.autoguider_available = True
       self.autoguider_connected = True
 
-      if self.autoguider_guiding and not (self.ra_axis_goto or self.dec_axis_goto):
+#      if self.autoguider_guiding and not (self.ra_axis_goto or self.dec_axis_goto):
+      if self.autoguider_guiding and self.ra_axis_tracking and not self.dec_axis_goto:
         # If autoguiding is enabled and GOTO is finished
         # we're recovering from a disconnect so trigger the next cycle:
-        sys.stderr.write('Resuming Autoguiding\r\n')
+        sys.stderr.write('Resuming Autoguiding...\r\n')
         self.guide_correction_pending = False
         self.dRA = 0
         self.adj_RA = 0.0
@@ -1719,13 +1807,10 @@ class scope_server:
 
     if response == 'ack':
       if self.verbose:
-        sys.stderr.write('Autoguider Performing Guide Star Drift\r\n')
+        sys.stderr.write('ScopeServer Received Ack: Autoguider Performing Guide Star Drift\r\n')
     else:
-      if self.verbose:
-        sys.stderr.write('Autoguider Error: Could Not Perform Guide Star Drift: \r\n' % (response))
-
-      sys.stderr.write('Autoguider Error: Could Not Perform Guide Star Drift: \r\n' % (response))
-      sys.stderr.write('Attempting to Reconnect\r\n' % (response))
+      sys.stderr.write('ScopeServer No Ack: Autoguider Could Not Perform Guide Star Drift: %s \r\n' % (response))
+      sys.stderr.write('Attempting to Reconnect...\r\n')
       self.motion_q.put(('ag_connect', None))
 
 
@@ -1796,7 +1881,7 @@ class scope_server:
       elif k=='s':
         if self.ra_axis_tracking:
           self.motion_q.put(('ra_track_stop', None))
-          sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          sys.stderr.write('  Stopped Tracking RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
 
       # Start Drift Alignment Robert Vice (DARV) routine on RA axis, go East
       elif k=='d':
@@ -1888,7 +1973,8 @@ class scope_server:
       response = 'ack'
       if self.verbose:
         sys.stderr.write('Autoguider Connected\r\n')
-      if self.autoguider_guiding and not (self.ra_axis_goto or self.dec_axis_goto):
+#      if self.autoguider_guiding and not (self.ra_axis_goto or self.dec_axis_goto):
+      if self.autoguider_guiding and self.ra_axis_tracking and not self.dec_axis_goto:
         # If autoguiding is enabled and GOTO is finished
         # we're recovering from a disconnect so trigger the next cycle:
         sys.stderr.write('Resuming Autoguiding\r\n')
@@ -1905,11 +1991,10 @@ class scope_server:
 
     elif cmd == 'toggle_guiding':
       if self.autoguider_connected:
-        if self.ra_axis_tracking:
-          if self.autoguider_guiding:
-            self.motion_q.put(('autoguider_guide_stop', None))
-          else:
-            self.motion_q.put(('autoguider_guide_start', None))
+        if self.autoguider_guiding:
+          self.motion_q.put(('autoguider_guide_stop', None))
+        elif self.ra_axis_tracking:
+          self.motion_q.put(('autoguider_guide_start', None))
       response = 'ack'
 
     elif cmd.split()[0] == 'guide_star_correction':
@@ -1920,6 +2005,7 @@ class scope_server:
         self.dDEC = int(cmd.split()[2])*self.meridian_mode
         reset_target = eval(cmd.split()[3])
         dec_angle_rad = self.dec_angle_to_radians(self.get_dec_angle())
+        #FIXME: why int() here?
         self.dRA = int(self.dRA/math.cos(dec_angle_rad))
         if reset_target:
           # Set cur pos_ra as current target
@@ -1930,12 +2016,25 @@ class scope_server:
           dec_angle = self.get_dec_angle()
           self.target_dec_angle = dec_angle
           self.target_dec_pos = self.dec_angle_to_pos(dec_angle)
-        self.adj_RA = self.dRA/self.sidereal_rate
         self.guide_correction_pending = True
+        self.adj_RA = self.dRA/self.sidereal_rate
         self.adj_target_ra_time_array(self.adj_RA)
         self.target_dec_pos += self.dDEC
-#        sys.stderr.write('Guide Correction dRA: %d  dDEC: %d\r\n' % (self.dRA, self.dDEC))
-        self.motion_q.put(('goto_target_start',None))
+        if self.verbose:
+          sys.stderr.write('Guide Correction dRA: %d  adj_RA: %g  dDEC: %d\r\n' % (self.dRA, self.adj_RA, self.dDEC))
+        if reset_target:
+          # This is a 'move to' command
+          self.guide_correction_iters = 0
+          self.guide_correction_max_iters = 1e6
+#          self.ra_axis_goto_precision = 'low'
+          self.ra_axis_goto_precision = 'high'
+          self.motion_q.put(('goto_target_start','center_rate'))
+        else:
+          # This is a true guide star correction
+          self.guide_correction_iters = 0
+          self.guide_correction_max_iters = 100
+          self.ra_axis_goto_precision = 'high'
+          self.motion_q.put(('goto_target_start','correction_rate'))
       response = 'ack'
 
     elif cmd == 'jog_target_north':
@@ -2042,7 +2141,7 @@ class scope_server:
       if not self.ra_axis_tracking:
         # Start RA axis tracking
         if self.verbose:
-          sys.stderr.write('  Start Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          sys.stderr.write('  Start Tracking RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
         ra_time_str = self.get_ra_time()
         self.target_ra_time = ra_time_str
         self.set_target_ra_time_array(ra_time_str)
@@ -2058,7 +2157,7 @@ class scope_server:
         if self.dec_axis_running:
           self.motion_q.put(('dec_slew_stop', None))
         if self.verbose:
-          sys.stderr.write('  Stopped Guiding RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
+          sys.stderr.write('  Stopped Tracking RA Axis at RA pos:  %.9g %.9g  %s %s\r\n' % (self.pos_ra, self.pos_dec, self.get_ra_time(), self.get_dec_angle()))
       response = 'ack'
 
     elif cmd == 'toggle_darv':
@@ -2209,6 +2308,7 @@ class scope_server:
       if self.ra_axis_tracking:
         self.motion_q.put(('ra_slew_stop', None))
       else:
+        self.ra_axis_goto_precision = 'high'
         self.motion_q.put(('goto_target_start',None))
       response = '0'
 

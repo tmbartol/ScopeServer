@@ -20,6 +20,7 @@ def get_ip(iface = 'wlan0'):
 scopeserver_host = get_ip()
 scopeserver_port = 54030
 host_dict = {}
+host_dict['10.0.1.13'] = '10.0.1.14'
 host_dict['10.0.1.20'] = '10.0.1.23'
 host_dict['10.0.1.23'] = '10.0.1.24'
 host_dict['192.168.50.5'] = '192.168.50.10'
